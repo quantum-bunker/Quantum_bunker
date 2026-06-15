@@ -4,8 +4,10 @@ import { Lock, Plus, LogIn, Trash2, ShieldCheck, Activity, Terminal, Sun, Moon, 
 import { useRelay } from './useRelay';
 import { useSession } from './useSession';
 import { useMembership } from './useMembership';
+import { useContacts } from './useContacts';
 import ChatRoom from './components/ChatRoom';
 import MembershipPanel from './components/MembershipPanel';
+import ContactBook from './components/ContactBook';
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -32,6 +34,7 @@ export default function App() {
   } = useSession();
 
   const membership = useMembership();
+  const contacts = useContacts();
 
   useEffect(() => {
     localStorage.setItem('qb-theme', theme);
@@ -68,9 +71,14 @@ export default function App() {
   useEffect(() => {
     const joinMatch = window.location.pathname.match(/^\/join\/([^/]+)$/);
     if (joinMatch) { setJoinId(joinMatch[1].trim()); window.history.replaceState({}, '', '/'); return; }
-    const vault = new URLSearchParams(window.location.search).get('vault');
+    const params = new URLSearchParams(window.location.search);
+    const vault = params.get('vault');
     if (vault) { setJoinId(vault.trim()); window.history.replaceState({}, '', window.location.pathname); }
-  }, []);
+    // A trust handshake link pins the sender's key into the contact book. Trust
+    // is purely client-side — nothing about this contact reaches the server.
+    const trust = params.get('trust');
+    if (trust) { contacts.pinFromTrustLink(trust); window.history.replaceState({}, '', window.location.pathname); }
+  }, [contacts]);
 
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
@@ -227,6 +235,8 @@ export default function App() {
                     </div>
 
                     <MembershipPanel membership={membership} hostSessions={savedSessions.filter(s => s.role === 'host')} />
+
+                    <ContactBook membership={membership} contacts={contacts} hostSessions={savedSessions.filter(s => s.role === 'host')} />
                   </div>
 
                   {/* Vault History */}

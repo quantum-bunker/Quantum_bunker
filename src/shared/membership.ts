@@ -1,4 +1,5 @@
 import { generateKeyPair, sign, verify } from '@stablelib/ed25519';
+import { hash as sha256 } from '@stablelib/sha256';
 
 // Stateless whitelist primitives. The host signs a member's public key into a
 // bearer-resistant token the member keeps on their own device; the server (or
@@ -121,6 +122,22 @@ export function decodeToken(encoded: string): MembershipToken | null {
     // fall through
   }
   return null;
+}
+
+// Stable, human-comparable fingerprint of a membership public key, used to
+// "pin" a trusted contact so a later key swap (a relay-mounted impersonation)
+// is visible. Same key in → same fingerprint out on every device, so two people
+// can read it aloud to confirm they pinned each other. Returns '' for a
+// malformed key rather than throwing, so callers can render a single check.
+export function fingerprintPublicKey(publicKeyB64: string): string {
+  try {
+    const digest = sha256(b64urlDecode(publicKeyB64));
+    let hex = '';
+    for (let i = 0; i < 8; i++) hex += digest[i].toString(16).padStart(2, '0');
+    return hex.match(/.{4}/g)!.join(' ').toUpperCase();
+  } catch {
+    return '';
+  }
 }
 
 export type VerifyResult = { valid: boolean; reason?: string; memberPublicKey?: string };
