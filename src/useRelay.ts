@@ -676,6 +676,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const sendFileStream = useCallback(async (file: File): Promise<{ ok: boolean; error?: string }> => {
     const mgr = channelsRef.current;
     if (!mgr || !sessionId || !peerId) return { ok: false, error: 'Secure channel not ready' };
+    if (!isWithinP2PFileLimit(file.size)) return { ok: false, error: 'File exceeds size limit' };
     const others = activePeersRef.current.filter(id => id !== peerId);
     if (!p2pRef.current.allConnected(others)) {
       return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
@@ -914,5 +915,5 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed };
+  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed };
 }
