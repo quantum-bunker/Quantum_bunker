@@ -1,6 +1,6 @@
 <div align="center">
 
-# [Quantum Bunker](https://555c9888-0c33-4aea-af34-9aa04df0f7e6-00-2t1v7p2dekc7n.kirk.replit.dev/)
+# [Quantum Bunker](https://quantum-bunker.onrender.com/)
 
 **Open-Source End-to-End Encrypted Ephemeral Messaging — Self-Destructing Secure Chat Built for Privacy**
 
@@ -112,7 +112,7 @@ npm run dev
 # 5. Open your browser to the localhost URL shown in the terminal
 ```
 
-> 🧪 **Try it live:** [🚀 Open Dev Server](https://555c9888-0c33-4aea-af34-9aa04df0f7e6-00-2t1v7p2dekc7n.kirk.replit.dev/) — click for instant testing without local setup.
+> 🧪 **Try it live:** [🚀 Open Dev Server](https://quantum-bunker.onrender.com/) — click for instant testing without local setup.
 
 ### Available Scripts
 
