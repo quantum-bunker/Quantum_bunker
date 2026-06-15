@@ -22,6 +22,10 @@ interface WebRTCMeshOptions {
   sendRtc: (toPeerId: string, frame: RtcFrame) => void;
   onMessage: (fromPeerId: string, data: string) => void;
   onStateChange: () => void;
+  // ICE config for every peer connection. Defaults to getIceConfig() (empty,
+  // host-candidates-only) for backward compatibility; the direct media path
+  // injects getP2PIceConfig() so peers behind separate NATs can connect.
+  iceConfig?: RTCConfiguration;
 }
 
 // The lexicographically-smaller peer creates the offer. This matches the Noise
@@ -52,7 +56,7 @@ export class WebRTCMesh {
   ensurePeer(peerId: string): void {
     if (peerId === this.selfId || this.peers.has(peerId)) return;
 
-    const pc = new RTCPeerConnection(getIceConfig());
+    const pc = new RTCPeerConnection(this.opts.iceConfig ?? getIceConfig());
     const peer: MeshPeer = { pc, dc: null, state: 'connecting', pendingCandidates: [], remoteReady: false };
     this.peers.set(peerId, peer);
 
@@ -162,6 +166,12 @@ export class WebRTCMesh {
 
   isConnected(peerId: string): boolean {
     return this.peers.get(peerId)?.state === 'connected';
+  }
+
+  // Raw lifecycle state for a peer, or undefined if no connection is tracked.
+  // useP2P maps this onto its signaling state machine.
+  stateOf(peerId: string): PeerState | undefined {
+    return this.peers.get(peerId)?.state;
   }
 
   connectedPeers(): string[] {

@@ -1,7 +1,9 @@
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { RelayEnvelope, EnvelopeType } from './shared/contracts/v1/envelope';
 import { PeerChannels, NoiseFrame } from './crypto/peer-channels';
-import { WebRTCMesh, RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
+import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
+import { useP2P } from './useP2P';
+import { requiresDirectPath } from './transport/p2p-policy';
 import { randomId } from './random';
 import { buildJoinCredentials } from './membership-store';
 import {
@@ -44,10 +46,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   const [safetyNumbers, setSafetyNumbers] = useState<Record<string, string>>({});
   const [fingerprints, setFingerprints] = useState<Record<string, string>>({});
   const [ownFingerprint, setOwnFingerprint] = useState<string | null>(null);
-  const [p2pPeers, setP2pPeers] = useState<string[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
   const channelsRef = useRef<PeerChannels | null>(null);
-  const meshRef = useRef<WebRTCMesh | null>(null);
+  const handleEnvelopeRef = useRef<((env: RelayEnvelope) => void) | null>(null);
   const activePeersRef = useRef<string[]>([]);
   const readSentRef = useRef<Set<string>>(new Set());
   const pingTimestampRef = useRef<Map<string, number>>(new Map());
@@ -94,20 +95,47 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     });
   }, [sessionId, peerId, sendRaw]);
 
+  const p2p = useP2P({
+    selfId: peerId,
+    sendSignal: useCallback((frame: RtcFrame) => sendSignal({ ...frame }), [sendSignal]),
+    onData: useCallback((_from: string, data: string) => {
+      try {
+        handleEnvelopeRef.current?.(JSON.parse(data) as RelayEnvelope);
+      } catch {
+        // Ignore malformed data-channel frames.
+      }
+    }, []),
+  });
+
   // Routes an envelope over the direct mesh when every peer has an open data
   // channel; otherwise over the WS relay. All-or-nothing per message keeps the
   // server out of the loop entirely once P2P is established, without risking
-  // duplicate delivery in mixed mode.
+  // duplicate delivery in mixed mode. Used for text/receipts/edits where relay
+  // is an acceptable fallback — large media uses dispatchDirect instead.
   const dispatch = useCallback((env: RelayEnvelope) => {
-    const mesh = meshRef.current;
     const others = activePeersRef.current.filter(id => id !== peerId);
-    if (mesh && shouldUseP2P(others, id => mesh.isConnected(id))) {
+    if (shouldUseP2P(others, id => p2p.isConnected(id))) {
       const data = JSON.stringify(env);
-      for (const id of others) mesh.send(id, data);
+      for (const id of others) p2p.sendDirect(id, data);
     } else {
       sendRaw(env);
     }
-  }, [peerId, sendRaw]);
+  }, [peerId, sendRaw, p2p]);
+
+  // Routes an envelope EXCLUSIVELY over the direct mesh. Returns false (sending
+  // nothing) when any peer lacks an open channel — the caller surfaces an error
+  // rather than relaying. This is the no-fallback path for large media so its
+  // bytes never reach the blind relay.
+  const dispatchDirect = useCallback((env: RelayEnvelope): boolean => {
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    if (!p2p.allConnected(others)) return false;
+    const data = JSON.stringify(env);
+    let ok = true;
+    for (const id of others) {
+      if (!p2p.sendDirect(id, data)) ok = false;
+    }
+    return ok;
+  }, [peerId, p2p]);
 
   const connect = useCallback(() => {
     if (!sessionId || !peerId) return;
@@ -130,10 +158,6 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       setFingerprints(mgr.fingerprints());
       setSecured(mgr.allReady(activePeersRef.current));
       if (ownFingerprint === null) setOwnFingerprint(mgr.ownFingerprint());
-    };
-
-    const refreshTransport = () => {
-      setP2pPeers(meshRef.current?.connectedPeers() ?? []);
     };
 
     // Transport-agnostic: invoked for envelopes arriving over the WS relay AND
@@ -215,8 +239,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
             channelsRef.current?.onSignal(env.from, sig as NoiseFrame);
             refreshCrypto();
           } else if (sig.kind === 'rtc') {
-            void meshRef.current?.onSignal(env.from, sig as RtcFrame);
-            refreshTransport();
+            p2p.handleSignal(env.from, sig as RtcFrame);
           } else if (sig.kind === 'typing') {
             setTypingAt(prev => {
               if (sig.state) return { ...prev, [env.from]: Date.now() };
@@ -293,18 +316,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       }
     };
 
-    meshRef.current = new WebRTCMesh({
-      selfId: peerId,
-      sendRtc: (to: string, frame: RtcFrame) => sendSignal({ ...frame }),
-      onMessage: (_from: string, data: string) => {
-        try {
-          handleEnvelope(JSON.parse(data) as RelayEnvelope);
-        } catch {
-          // Ignore malformed data-channel frames.
-        }
-      },
-      onStateChange: refreshTransport,
-    });
+    handleEnvelopeRef.current = handleEnvelope;
 
     socket.onopen = () => {
       console.log('WS Connected');
@@ -357,19 +369,17 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         setActivePeers(next);
         setIsGroup(!!data.isGroup);
         const mgr = channelsRef.current;
-        const mesh = meshRef.current;
         for (const id of next) {
           if (id === peerId) continue;
           mgr?.ensureChannel(id);
-          mesh?.ensurePeer(id);
+          p2p.ensurePeer(id);
         }
         for (const id of prev) {
           if (next.includes(id)) continue;
           mgr?.removePeer(id);
-          mesh?.removePeer(id);
+          p2p.removePeer(id);
         }
         refreshCrypto();
-        refreshTransport();
         return;
       }
 
@@ -401,7 +411,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     };
 
     socketRef.current = socket;
-  }, [sessionId, peerId, sendRaw, sendSignal, dispatch]);
+  }, [sessionId, peerId, sendRaw, sendSignal, dispatch, p2p]);
 
   const sendMessage = useCallback((payload: string, type: EnvelopeType = EnvelopeType.NOISE_MESSAGE) => {
     if (!socketRef.current || !isConnected || !sessionId || !peerId || activePeers.length <= 1) return;
@@ -510,14 +520,26 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     const wirePayload = JSON.stringify(channelsRef.current.encryptForAll(inner));
     const nonce = randomId();
 
-    dispatch({
+    const envelope: RelayEnvelope = {
       sessionId,
       from: peerId,
       type: EnvelopeType.FILE,
       timestamp: Date.now(),
       nonce,
       payload: wirePayload,
-    });
+    };
+
+    // Media above the threshold MUST take the direct P2P path: its bytes never
+    // touch the blind relay. If no direct link is up we surface a visible error
+    // instead of falling back to the server — that fallback would defeat the
+    // whole point (server bandwidth + a relayed copy of the media).
+    if (requiresDirectPath(file.size)) {
+      if (!dispatchDirect(envelope)) {
+        return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
+      }
+    } else {
+      dispatch(envelope);
+    }
 
     // Local echo keeps the cleartext attachment so the sender always sees their
     // own file rendered, even when it was password-locked for the recipients.
@@ -528,7 +550,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }]);
 
     return { ok: true };
-  }, [isConnected, sessionId, peerId, activePeers.length, dispatch]);
+  }, [isConnected, sessionId, peerId, activePeers.length, dispatch, dispatchDirect]);
 
   const editMessage = useCallback((targetNonce: string, newText: string) => {
     if (!sessionId || !peerId || !newText.trim()) return;
@@ -572,10 +594,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }
     return () => {
       socketRef.current?.close();
-      meshRef.current?.reset();
-      meshRef.current = null;
+      p2p.reset();
     };
-  }, [sessionId, peerId, connect]);
+  }, [sessionId, peerId, connect, p2p]);
 
   // Periodic PING to measure round-trip latency
   useEffect(() => {
@@ -636,8 +657,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
 
   const typingPeers = Object.keys(typingAt).filter(id => id !== peerId);
   const otherPeers = activePeers.filter(id => id !== peerId);
+  const p2pPeers = p2p.connectedPeers;
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport };
+  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed };
 }

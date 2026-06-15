@@ -125,7 +125,7 @@ function LockedAttachment({ att }: { att: FileAttachment }) {
 }
 
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset }: ChatRoomProps) {
-  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport } = useRelay(sessionId, peerId);
+  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed } = useRelay(sessionId, peerId);
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -476,6 +476,9 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
             {activePeers.length > 1 && (transport === 'p2p'
               ? <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20 font-bold uppercase" title="Direct P2P data channel."><Radio size={11} /> DIRECT_P2P</span>
               : <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 font-bold uppercase" title="Via (blind) WS relay."><Server size={11} /> VIA_RELAY</span>
+            )}
+            {activePeers.length > 1 && directLinkFailed && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-bold uppercase animate-pulse" title="A direct peer-to-peer link could not be established (no STUN/NAT path). Large files & video cannot be sent — they are never relayed through the server."><Ban size={11} /> DIRECT_LINK_FAILED</span>
             )}
             <div className="flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar ml-2">
               {activePeers.map(p => (
