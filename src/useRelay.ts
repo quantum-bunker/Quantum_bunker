@@ -112,6 +112,13 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }, []),
   });
 
+  // useP2P returns a fresh object every render; its methods are stable
+  // useCallbacks. Reach the mesh through a ref so the WS connection lifecycle
+  // and dispatch callbacks don't churn (and tear down the socket) on every
+  // re-render — they only ever call the latest p2p methods.
+  const p2pRef = useRef(p2p);
+  p2pRef.current = p2p;
+
   // Routes an envelope over the direct mesh when every peer has an open data
   // channel; otherwise over the WS relay. All-or-nothing per message keeps the
   // server out of the loop entirely once P2P is established, without risking
@@ -119,13 +126,13 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   // is an acceptable fallback — large media uses dispatchDirect instead.
   const dispatch = useCallback((env: RelayEnvelope) => {
     const others = activePeersRef.current.filter(id => id !== peerId);
-    if (shouldUseP2P(others, id => p2p.isConnected(id))) {
+    if (shouldUseP2P(others, id => p2pRef.current.isConnected(id))) {
       const data = JSON.stringify(env);
-      for (const id of others) p2p.sendDirect(id, data);
+      for (const id of others) p2pRef.current.sendDirect(id, data);
     } else {
       sendRaw(env);
     }
-  }, [peerId, sendRaw, p2p]);
+  }, [peerId, sendRaw]);
 
   // Routes an envelope EXCLUSIVELY over the direct mesh. Returns false (sending
   // nothing) when any peer lacks an open channel — the caller surfaces an error
@@ -133,14 +140,14 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   // bytes never reach the blind relay.
   const dispatchDirect = useCallback((env: RelayEnvelope): boolean => {
     const others = activePeersRef.current.filter(id => id !== peerId);
-    if (!p2p.allConnected(others)) return false;
+    if (!p2pRef.current.allConnected(others)) return false;
     const data = JSON.stringify(env);
     let ok = true;
     for (const id of others) {
-      if (!p2p.sendDirect(id, data)) ok = false;
+      if (!p2pRef.current.sendDirect(id, data)) ok = false;
     }
     return ok;
-  }, [peerId, p2p]);
+  }, [peerId]);
 
   // Encrypted-at-rest outbox for messages composed while no peer is online. The
   // at-rest key is derived from this device's per-session Noise identity secret;
@@ -296,7 +303,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
             channelsRef.current?.onSignal(env.from, sig as NoiseFrame);
             refreshCrypto();
           } else if (sig.kind === 'rtc') {
-            p2p.handleSignal(env.from, sig as RtcFrame);
+            p2pRef.current.handleSignal(env.from, sig as RtcFrame);
           } else if (sig.kind === 'typing') {
             setTypingAt(prev => {
               if (sig.state) return { ...prev, [env.from]: Date.now() };
@@ -436,7 +443,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         for (const id of next) {
           if (id === peerId) continue;
           mgr?.ensureChannel(id);
-          p2p.ensurePeer(id);
+          p2pRef.current.ensurePeer(id);
           // A returning peer: replay any envelopes we are carrying for it.
           if (!prev.includes(id)) {
             for (const held of mailboxRef.current.release(id)) dispatch(held);
@@ -445,7 +452,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         for (const id of prev) {
           if (next.includes(id)) continue;
           mgr?.removePeer(id);
-          p2p.removePeer(id);
+          p2pRef.current.removePeer(id);
         }
         refreshCrypto();
         return;
@@ -479,7 +486,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     };
 
     socketRef.current = socket;
-  }, [sessionId, peerId, sendRaw, sendSignal, dispatch, p2p]);
+  }, [sessionId, peerId, sendRaw, sendSignal, dispatch]);
 
   const sendMessage = useCallback((payload: string, type: EnvelopeType = EnvelopeType.NOISE_MESSAGE) => {
     if (!sessionId || !peerId) return;
@@ -678,9 +685,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }
     return () => {
       socketRef.current?.close();
-      p2p.reset();
+      p2pRef.current.reset();
     };
-  }, [sessionId, peerId, connect, p2p]);
+  }, [sessionId, peerId, connect]);
 
   // Flush the offline outbox once a secure channel to a returning peer is up.
   useEffect(() => {
