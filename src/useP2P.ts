@@ -15,6 +15,8 @@ interface UseP2POptions {
   sendSignal: (frame: RtcFrame) => void;
   // Invoked with the raw string received over a peer's data channel.
   onData: (fromPeerId: string, data: string) => void;
+  // Invoked with raw binary frames (streamed file chunks) from a peer.
+  onBinary?: (fromPeerId: string, data: ArrayBuffer) => void;
 }
 
 export interface UseP2P {
@@ -25,6 +27,10 @@ export interface UseP2P {
   // Sends raw data directly to a peer over its data channel. Returns false if no
   // open channel exists — the caller MUST NOT relay as a fallback for media.
   sendDirect: (peerId: string, data: string) => boolean;
+  // Sends a raw binary frame (streamed file chunk) directly to a peer.
+  sendBinaryDirect: (peerId: string, data: ArrayBuffer) => boolean;
+  // Current send-buffer depth for a peer's channel, for streaming backpressure.
+  bufferedAmount: (peerId: string) => number;
   isConnected: (peerId: string) => boolean;
   // True only when every listed peer has an open direct channel.
   allConnected: (others: string[]) => boolean;
@@ -47,7 +53,7 @@ export interface UseP2P {
 // the hop and a TURN/relayed path could otherwise be a trust boundary; the
 // existing E2E guarantee is therefore never weakened.
 export function useP2P(opts: UseP2POptions): UseP2P {
-  const { selfId, sendSignal, onData } = opts;
+  const { selfId, sendSignal, onData, onBinary } = opts;
 
   const meshRef = useRef<WebRTCMesh | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, P2PPeerState>>({});
@@ -83,11 +89,12 @@ export function useP2P(opts: UseP2POptions): UseP2P {
         iceConfig: getP2PIceConfig(),
         sendRtc: (_to, frame) => sendSignal(frame),
         onMessage: onData,
+        onBinary,
         onStateChange: sync,
       });
     }
     return meshRef.current;
-  }, [selfId, sendSignal, onData, sync]);
+  }, [selfId, sendSignal, onData, onBinary, sync]);
 
   const ensurePeer = useCallback((peerId: string) => {
     if (!selfId || peerId === selfId) return;
@@ -126,6 +133,16 @@ export function useP2P(opts: UseP2POptions): UseP2P {
     [],
   );
 
+  const sendBinaryDirect = useCallback(
+    (peerId: string, data: ArrayBuffer): boolean => meshRef.current?.sendBinary(peerId, data) ?? false,
+    [],
+  );
+
+  const bufferedAmount = useCallback(
+    (peerId: string): number => meshRef.current?.bufferedAmount(peerId) ?? Infinity,
+    [],
+  );
+
   const isConnected = useCallback(
     (peerId: string): boolean => meshRef.current?.isConnected(peerId) ?? false,
     [],
@@ -149,6 +166,8 @@ export function useP2P(opts: UseP2POptions): UseP2P {
     reset,
     handleSignal,
     sendDirect,
+    sendBinaryDirect,
+    bufferedAmount,
     isConnected,
     allConnected,
     connectedPeers,
