@@ -271,6 +271,11 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
     fileInputRef.current?.click();
   };
 
+  const openLargeFilePicker = () => {
+    setAttachMenuOpen(false);
+    largeFileInputRef.current?.click();
+  };
+
   const submitProtected = async () => {
     if (!pwModal) return;
     if (!pwModal.password) { setFileError('Password required'); return; }
@@ -740,7 +745,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                     <button
                       type="button"
                       onClick={() => openFilePicker(false)}
-                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-cyan-500/10 transition-colors"
+                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-cyan-500/10 transition-colors border-b border-black/5 dark:border-white/5"
                     >
                       <ShieldCheck size={15} className="text-cyan-600 dark:text-cyan-400 shrink-0 mt-0.5" />
                       <span>
@@ -748,20 +753,21 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                         <span className="block text-[9px] font-mono text-slate-400">E2E encrypted end-to-end</span>
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={openLargeFilePicker}
+                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-violet-500/10 transition-colors"
+                    >
+                      <HardDriveUpload size={15} className="text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" />
+                      <span>
+                        <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-200">Send large file</span>
+                        <span className="block text-[9px] font-mono text-slate-400">Direct P2P up to {formatBytes(MAX_P2P_FILE_BYTES)} — never touches the server</span>
+                      </span>
+                    </button>
                   </div>
                 </>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => largeFileInputRef.current?.click()}
-              disabled={!isConnected || activePeers.length <= 1 || isPending || messagingBlocked}
-              title={`Send large file directly peer-to-peer (up to ${formatBytes(MAX_P2P_FILE_BYTES)}) — bytes never touch the server`}
-              className="h-full px-4 border border-black/10 dark:border-white/10 text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-500/40 transition-colors disabled:opacity-20 flex items-center gap-2"
-            >
-              <HardDriveUpload size={16} />
-              <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-widest">Large file</span>
-            </button>
             <button
               type="button"
               onMouseDown={() => void startRecording()}
