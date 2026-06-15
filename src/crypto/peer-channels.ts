@@ -1,5 +1,5 @@
 import { generateKeyPair } from '@stablelib/x25519';
-import { HandshakeState, KeyPair } from './noise-xx';
+import { HandshakeState, KeyPair, PROTOCOL_NAME } from './noise-xx';
 import { DoubleRatchet, DRKeyPair, RatchetSlot } from './double-ratchet';
 import {
   generateKemKeyPair,
@@ -62,12 +62,14 @@ interface PeerChannelsOptions {
 
 export class PeerChannels {
   private readonly selfId: string;
+  private readonly sessionId: string;
   private readonly sendNoise: PeerChannelsOptions['sendNoise'];
   private readonly staticKey: KeyPair;
   private readonly channels = new Map<string, Channel>();
 
   constructor(opts: PeerChannelsOptions) {
     this.selfId = opts.selfId;
+    this.sessionId = opts.sessionId;
     this.sendNoise = opts.sendNoise;
     this.staticKey = opts.identity ?? loadOrCreateIdentity(opts.sessionId);
   }
@@ -78,10 +80,14 @@ export class PeerChannels {
 
   private newChannel(peerId: string): Channel {
     const initiator = this.isInitiator(peerId);
+    const [initiatorId, responderId] = initiator
+      ? [this.selfId, peerId]
+      : [peerId, this.selfId];
+    const prologue = buildPrologue(this.sessionId, initiatorId, responderId);
     return {
       initiator,
       phase: 'handshaking',
-      hs: new HandshakeState(initiator, this.staticKey),
+      hs: new HandshakeState(initiator, this.staticKey, { prologue }),
       ratchet: null,
       safetyNumber: null,
       remoteStaticKey: null,
@@ -262,6 +268,32 @@ function splitHandshakePayload(payload: Uint8Array): { drKey: Uint8Array; kemBlo
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Binds the Noise handshake to this exact session and peer pairing. A captured
+// handshake transcript cannot be replayed into a different session or against a
+// different peer pair because the mixed-in prologue would no longer match.
+//
+// Ordering rule: fields are emitted in a FIXED order — protocol, sessionId,
+// initiator, responder — and each is length-prefixed (decimal length + ':')
+// so no field's contents can be confused with a delimiter or with an adjacent
+// field. Roles are assigned deterministically by both peers (selfId < peerId →
+// initiator), so the caller passes already-ordered ids and both sides derive a
+// byte-identical prologue. Any divergence here makes the handshake fail, which
+// is the intended replay-protection property.
+export function buildPrologue(
+  sessionId: string,
+  initiatorPeerId: string,
+  responderPeerId: string,
+): Uint8Array {
+  const field = (s: string): string => `${utf8(s).length}:${s}`;
+  const canonical = [
+    field(PROTOCOL_NAME),
+    field(sessionId),
+    field(initiatorPeerId),
+    field(responderPeerId),
+  ].join('|');
+  return utf8(canonical);
 }
 
 function loadOrCreateIdentity(sessionId: string): KeyPair {

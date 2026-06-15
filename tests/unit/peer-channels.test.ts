@@ -113,6 +113,28 @@ describe('PeerChannels', () => {
     expect(fpFromA).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('fails the handshake when a transcript is replayed into a different session', () => {
+    // peer-a and peer-b each believe they are in a different session, so their
+    // prologues diverge. Relaying one side's handshake frames to the other (a
+    // captured-transcript replay across sessions) must never complete.
+    const a = new PeerChannels({
+      sessionId: 'session-A',
+      selfId: 'peer-a',
+      sendNoise: (to: string, frame: NoiseFrame) => { if (to === 'peer-b') b.onSignal('peer-a', frame); },
+    });
+    const b = new PeerChannels({
+      sessionId: 'session-B',
+      selfId: 'peer-b',
+      sendNoise: (to: string, frame: NoiseFrame) => { if (to === 'peer-a') a.onSignal('peer-b', frame); },
+    });
+
+    a.ensureChannel('peer-b');
+    b.ensureChannel('peer-a');
+
+    expect(a.isReady('peer-b')).toBe(false);
+    expect(b.isReady('peer-a')).toBe(false);
+  });
+
   it('drops a removed peer', () => {
     const m = mesh('peer-a', 'peer-b');
     connect(m);
