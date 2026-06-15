@@ -5,9 +5,11 @@ import { useRelay } from './useRelay';
 import { useSession } from './useSession';
 import { useMembership } from './useMembership';
 import { useContacts } from './useContacts';
+import { useIdentity } from './useIdentity';
 import ChatRoom from './components/ChatRoom';
 import MembershipPanel from './components/MembershipPanel';
 import ContactBook from './components/ContactBook';
+import IdentityPanel from './components/IdentityPanel';
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -35,6 +37,7 @@ export default function App() {
 
   const membership = useMembership();
   const contacts = useContacts();
+  const identity = useIdentity();
 
   useEffect(() => {
     localStorage.setItem('qb-theme', theme);
@@ -234,6 +237,8 @@ export default function App() {
                       ))}
                     </div>
 
+                    <IdentityPanel identity={identity} />
+
                     <MembershipPanel membership={membership} hostSessions={savedSessions.filter(s => s.role === 'host')} />
 
                     <ContactBook membership={membership} contacts={contacts} hostSessions={savedSessions.filter(s => s.role === 'host')} />
@@ -282,7 +287,7 @@ export default function App() {
             </motion.div>
           ) : (
             <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex overflow-hidden">
-              <ChatRoom sessionId={sessionId!} sessionName={sessionName} peerId={peerId!} isHost={isHost} expiresAt={expiresAt} timeLeft={timeLeft} isExpired={isExpired} securityOptions={securityOptions} reset={reset} />
+              <ChatRoom sessionId={sessionId!} sessionName={sessionName} peerId={peerId!} isHost={isHost} expiresAt={expiresAt} timeLeft={timeLeft} isExpired={isExpired} securityOptions={securityOptions} reset={reset} identity={identity.identity} />
             </motion.div>
           )}
         </AnimatePresence>

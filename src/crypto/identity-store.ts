@@ -86,6 +86,23 @@ export async function promoteSessionIdentity(
   return pair;
 }
 
+// Scans sessionStorage for a legacy per-session identity and returns the
+// sessionId it is keyed under, or null. Lets the UI offer promotion without the
+// caller already knowing the sessionId.
+export function detectSessionIdentity(): string | null {
+  try {
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(SESSION_IDENTITY_PREFIX)) {
+        return k.slice(SESSION_IDENTITY_PREFIX.length);
+      }
+    }
+  } catch {
+    // sessionStorage unavailable.
+  }
+  return null;
+}
+
 export function clearLongTermIdentity(): void {
   try {
     localStorage.removeItem(LONG_TERM_IDENTITY_KEY);

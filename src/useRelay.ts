@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { RelayEnvelope, EnvelopeType } from './shared/contracts/v1/envelope';
 import { PeerChannels, NoiseFrame } from './crypto/peer-channels';
+import { KeyPair } from './crypto/noise-xx';
 import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
 import { useP2P } from './useP2P';
 import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
@@ -43,7 +44,7 @@ export interface LocalMessage extends RelayEnvelope {
   fileError?: string; // set when a streamed transfer is rejected or interrupted
 }
 
-export function useRelay(sessionId: string | null, peerId: string | null) {
+export function useRelay(sessionId: string | null, peerId: string | null, identity?: KeyPair | null) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isPending, setIsPending] = useState(false);
@@ -61,6 +62,10 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   const [ownFingerprint, setOwnFingerprint] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const channelsRef = useRef<PeerChannels | null>(null);
+  // Latest resolved static identity (null = burner). Read at connect time so an
+  // identity unlocked before joining is used without re-triggering connect.
+  const identityRef = useRef<KeyPair | null>(identity ?? null);
+  identityRef.current = identity ?? null;
   const outboxRef = useRef<MessageOutbox | null>(null);
   const flushingRef = useRef<boolean>(false);
   const mailboxRef = useRef<PeerMailbox>(new PeerMailbox());
@@ -233,6 +238,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       sessionId,
       selfId: peerId,
       sendNoise: (to: string, frame: NoiseFrame) => sendSignal({ ...frame }),
+      identity: identityRef.current ?? undefined,
     });
     setOwnFingerprint(channelsRef.current.ownFingerprint());
 
