@@ -53,6 +53,11 @@ interface PeerChannelsOptions {
   sessionId: string;
   selfId: string;
   sendNoise: (toPeerId: string, frame: NoiseFrame) => void;
+  // Optional pre-resolved static identity. Callers that have unlocked a
+  // long-term identity (see identity-store.ts) pass it here; loading the
+  // encrypted key is async and must happen before construction. When omitted we
+  // fall back to the legacy per-session sessionStorage identity (burner-style).
+  identity?: KeyPair;
 }
 
 export class PeerChannels {
@@ -64,7 +69,7 @@ export class PeerChannels {
   constructor(opts: PeerChannelsOptions) {
     this.selfId = opts.selfId;
     this.sendNoise = opts.sendNoise;
-    this.staticKey = loadOrCreateIdentity(opts.sessionId);
+    this.staticKey = opts.identity ?? loadOrCreateIdentity(opts.sessionId);
   }
 
   private isInitiator(peerId: string): boolean {
