@@ -14,6 +14,8 @@ import {
 } from './file-transfer';
 import { encryptFileData, FileCipher } from './file-crypto';
 import { toBase64 } from './crypto/noise-primitives';
+import { MessageOutbox, WILDCARD_RECIPIENT } from './outbox-store';
+import { PeerMailbox } from './peer-mailbox';
 
 export interface SendFileOptions {
   password?: string;
@@ -48,6 +50,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   const [ownFingerprint, setOwnFingerprint] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const channelsRef = useRef<PeerChannels | null>(null);
+  const outboxRef = useRef<MessageOutbox | null>(null);
+  const flushingRef = useRef<boolean>(false);
+  const mailboxRef = useRef<PeerMailbox>(new PeerMailbox());
   const handleEnvelopeRef = useRef<((env: RelayEnvelope) => void) | null>(null);
   const activePeersRef = useRef<string[]>([]);
   const readSentRef = useRef<Set<string>>(new Set());
@@ -137,6 +142,54 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     return ok;
   }, [peerId, p2p]);
 
+  // Encrypted-at-rest outbox for messages composed while no peer is online. The
+  // at-rest key is derived from this device's per-session Noise identity secret;
+  // it never leaves the device and the server stores nothing.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    const secret = sessionStorage.getItem(`qb-noise-id-${sessionId}`) ?? sessionId;
+    MessageOutbox.open(sessionId, secret).then(box => {
+      if (!cancelled) outboxRef.current = box;
+    }).catch(() => {});
+    return () => { cancelled = true; outboxRef.current = null; };
+  }, [sessionId]);
+
+  // Re-sends a queued entry over the live transport, preserving its ORIGINAL
+  // nonce so the recipient dedups correctly. Returns false when no peer path is
+  // up, which aborts the drain and keeps the queue intact for the next attempt.
+  const sendQueued = useCallback((entry: { nonce: string; type: EnvelopeType; plaintext: string; timestamp: number }): boolean => {
+    if (!sessionId || !peerId) return false;
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    if (others.length === 0) return false;
+    const mgr = channelsRef.current;
+    if (!mgr || !mgr.allReady(activePeersRef.current)) return false;
+    const wirePayload =
+      entry.type === EnvelopeType.NOISE_MESSAGE
+        ? JSON.stringify(mgr.encryptForAll(entry.plaintext))
+        : entry.plaintext;
+    dispatch({
+      sessionId,
+      from: peerId,
+      type: entry.type,
+      timestamp: entry.timestamp,
+      nonce: entry.nonce,
+      payload: wirePayload,
+    });
+    return true;
+  }, [sessionId, peerId, dispatch]);
+
+  const flushOutbox = useCallback(async () => {
+    const box = outboxRef.current;
+    if (!box || flushingRef.current) return;
+    flushingRef.current = true;
+    try {
+      await box.drain(entry => sendQueued(entry));
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [sendQueued]);
+
   const connect = useCallback(() => {
     if (!sessionId || !peerId) return;
 
@@ -173,6 +226,10 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       }
 
       if (env.type === EnvelopeType.ACK) {
+        // Delivery confirmed: drop any queued copy so it is never re-sent. The
+        // recipient's nonce dedup would discard a duplicate anyway, making the
+        // whole queue→flush→ack path exactly-once.
+        void outboxRef.current?.markDelivered(env.payload);
         setMessages(prev => prev.map(m => {
           if (m.nonce === env.payload) {
             const deliveredTo = Array.from(new Set([...m.deliveredTo, env.from]));
@@ -254,6 +311,13 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
           // Ignore malformed signaling frames
         }
         return;
+      }
+
+      // Tier-2 mailbox: hold a copy for any addressed peer who is currently
+      // absent, to forward on their return. The blob stays sealed for the final
+      // recipient — we are only a carrier (see peer-mailbox.ts).
+      if (env.type === EnvelopeType.NOISE_MESSAGE || env.type === EnvelopeType.FILE) {
+        mailboxRef.current.hold(env, new Set(activePeersRef.current));
       }
 
       // File attachments are encrypted exactly like NOISE_MESSAGE; the cleartext
@@ -373,6 +437,10 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
           if (id === peerId) continue;
           mgr?.ensureChannel(id);
           p2p.ensurePeer(id);
+          // A returning peer: replay any envelopes we are carrying for it.
+          if (!prev.includes(id)) {
+            for (const held of mailboxRef.current.release(id)) dispatch(held);
+          }
         }
         for (const id of prev) {
           if (next.includes(id)) continue;
@@ -414,7 +482,23 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   }, [sessionId, peerId, sendRaw, sendSignal, dispatch, p2p]);
 
   const sendMessage = useCallback((payload: string, type: EnvelopeType = EnvelopeType.NOISE_MESSAGE) => {
-    if (!socketRef.current || !isConnected || !sessionId || !peerId || activePeers.length <= 1) return;
+    if (!sessionId || !peerId) return;
+
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    const ready = !!channelsRef.current && channelsRef.current.allReady(activePeersRef.current);
+
+    // No online, secured recipient: queue the cleartext (sealed at rest) for a
+    // trusted contact who is offline. It flushes on their reconnect, keeping
+    // this same nonce — the server never sees or stores it.
+    if (others.length === 0 || !ready) {
+      const nonce = randomId();
+      void outboxRef.current?.enqueue({ nonce, to: WILDCARD_RECIPIENT, type, plaintext: payload, timestamp: Date.now() });
+      setMessages(prev => [...prev, {
+        sessionId, from: peerId, type, timestamp: Date.now(), nonce,
+        payload, status: 'sending', deliveredTo: [], seenBy: [],
+      }]);
+      return;
+    }
 
     const wirePayload =
       type === EnvelopeType.NOISE_MESSAGE && channelsRef.current
@@ -597,6 +681,11 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       p2p.reset();
     };
   }, [sessionId, peerId, connect, p2p]);
+
+  // Flush the offline outbox once a secure channel to a returning peer is up.
+  useEffect(() => {
+    if (secured && activePeers.length > 1) void flushOutbox();
+  }, [secured, activePeers.length, flushOutbox]);
 
   // Periodic PING to measure round-trip latency
   useEffect(() => {
