@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Info, Trash2, ShieldCheck, ShieldAlert, ShieldQuestion, Fingerprint, Radio, Server, Activity, Terminal, X, Share2, QrCode, Search, Pencil, Check, Ban, Paperclip, Download, FileText, Mic, Lock, LockKeyhole, Loader2 } from 'lucide-react';
+import { Info, Trash2, ShieldCheck, ShieldAlert, ShieldQuestion, Fingerprint, Radio, Server, Activity, Terminal, X, Share2, QrCode, Search, Pencil, Check, Ban, Paperclip, Download, FileText, Mic, Lock, LockKeyhole, Loader2, HardDriveUpload } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useRelay } from '../useRelay';
 import { normalizeQuery, messageMatches, splitOnQuery } from '../message-search';
-import { attachmentKind, attachmentDataUrl, formatBytes, MAX_FILE_BYTES, FileAttachment } from '../file-transfer';
+import { attachmentKind, attachmentDataUrl, formatBytes, MAX_FILE_BYTES, MAX_P2P_FILE_BYTES, FileAttachment } from '../file-transfer';
 import { decryptFileData, FileCipher } from '../file-crypto';
 import { toBase64 } from '../crypto/noise-primitives';
 import { KeyPair } from '../crypto/noise-xx';
@@ -162,7 +162,7 @@ function LockedAttachment({ att }: { att: FileAttachment }) {
 }
 
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset, identity }: ChatRoomProps) {
-  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed } = useRelay(sessionId, peerId, identity);
+  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed } = useRelay(sessionId, peerId, identity);
   const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
   const otherPeers = activePeers.filter(p => p !== peerId);
   const messagingBlocked = changedPeers.length > 0;
@@ -184,6 +184,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
   const [pwModal, setPwModal] = useState<{ files: File[]; password: string; confirm: string; algo: FileCipher } | null>(null);
   const protectNextRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const largeFileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -234,6 +235,22 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
     for (const file of Array.from(files)) {
       const res = await sendFile(file);
       if (!res.ok) reportFileError(file, res.error);
+    }
+  };
+
+  // Dedicated large-file path: streams each file directly over the WebRTC mesh
+  // (sendLargeFile === sendFileStream). The bytes never reach the blind relay —
+  // only a tiny key-bearing init envelope is exchanged P2P. No server load.
+  const handleLargeFiles = async (files: FileList | File[] | null) => {
+    if (!files) return;
+    setFileError(null);
+    for (const file of Array.from(files)) {
+      const res = await sendLargeFile(file);
+      if (!res.ok) {
+        setFileError(res.error === 'File exceeds size limit'
+          ? `${file.name} exceeds the ${formatBytes(MAX_P2P_FILE_BYTES)} direct-transfer limit`
+          : res.error || 'Direct transfer failed');
+      }
     }
   };
 
@@ -688,6 +705,13 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               className="hidden"
               onChange={(e) => { onPickFiles(e.target.files); e.target.value = ''; }}
             />
+            <input
+              ref={largeFileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => { void handleLargeFiles(e.target.files); e.target.value = ''; }}
+            />
             <div className="relative">
               <button
                 type="button"
@@ -728,6 +752,16 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                 </>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => largeFileInputRef.current?.click()}
+              disabled={!isConnected || activePeers.length <= 1 || isPending || messagingBlocked}
+              title={`Send large file directly peer-to-peer (up to ${formatBytes(MAX_P2P_FILE_BYTES)}) — bytes never touch the server`}
+              className="h-full px-4 border border-black/10 dark:border-white/10 text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-500/40 transition-colors disabled:opacity-20 flex items-center gap-2"
+            >
+              <HardDriveUpload size={16} />
+              <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-widest">Large file</span>
+            </button>
             <button
               type="button"
               onMouseDown={() => void startRecording()}
