@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Info, Trash2, ShieldCheck, ShieldAlert, Fingerprint, Radio, Server, Activity, Terminal, X, Share2, QrCode, Search, Pencil, Check, Ban, Paperclip, Download, FileText, Mic, Lock, LockKeyhole, Loader2 } from 'lucide-react';
+import { Info, Trash2, ShieldCheck, ShieldAlert, ShieldQuestion, Fingerprint, Radio, Server, Activity, Terminal, X, Share2, QrCode, Search, Pencil, Check, Ban, Paperclip, Download, FileText, Mic, Lock, LockKeyhole, Loader2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useRelay } from '../useRelay';
 import { normalizeQuery, messageMatches, splitOnQuery } from '../message-search';
@@ -8,7 +8,8 @@ import { attachmentKind, attachmentDataUrl, formatBytes, MAX_FILE_BYTES, FileAtt
 import { decryptFileData, FileCipher } from '../file-crypto';
 import { toBase64 } from '../crypto/noise-primitives';
 import { VOICE_MIME_CANDIDATES, chooseSupportedMime, voiceFileName } from '../voice-record';
-import FingerprintCard from './FingerprintCard';
+import { useContactVerification } from '../useContactVerification';
+import { ContactVerificationPanel, KeyChangeWarning } from './ContactVerification';
 
 interface ChatRoomProps {
   sessionId: string;
@@ -126,6 +127,9 @@ function LockedAttachment({ att }: { att: FileAttachment }) {
 
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset }: ChatRoomProps) {
   const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed } = useRelay(sessionId, peerId);
+  const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
+  const otherPeers = activePeers.filter(p => p !== peerId);
+  const messagingBlocked = changedPeers.length > 0;
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -173,7 +177,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
     }
   }, [isConnected, error, reset]);
 
-  const handleSend = (e: React.FormEvent) => { e.preventDefault(); if (!input.trim()) return; sendMessage(input); setInput(''); };
+  const handleSend = (e: React.FormEvent) => { e.preventDefault(); if (!input.trim() || messagingBlocked) return; sendMessage(input); setInput(''); };
   const beginEdit = (nonce: string, current: string) => { setEditingNonce(nonce); setEditDraft(current); };
   const cancelEdit = () => { setEditingNonce(null); setEditDraft(''); };
   const commitEdit = (nonce: string) => {
@@ -386,16 +390,17 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         </section>
 
         <section>
-          <h3 className="mono-label mb-4 uppercase tracking-widest font-bold flex items-center gap-2"><Fingerprint size={12} /> Key Fingerprints</h3>
-          <div className="space-y-3">
-            <FingerprintCard label="YOU" fp={ownFingerprint} />
-            {Object.keys(fingerprints).map(id => (
-              <FingerprintCard key={id} label={peerAliases[id] || id.replace('peer-', 'PEER_')} fp={fingerprints[id]} />
-            ))}
-            {Object.keys(fingerprints).length === 0 && (
-              <p className="text-[9px] font-mono text-slate-400 italic uppercase tracking-tighter">Peer fingerprints appear after handshake</p>
-            )}
-          </div>
+          <h3 className="mono-label mb-4 uppercase tracking-widest font-bold flex items-center gap-2"><Fingerprint size={12} /> Verify Contacts</h3>
+          <ContactVerificationPanel
+            peers={otherPeers}
+            displayName={displayName}
+            statuses={verifyStatuses}
+            safetyNumbers={safetyNumbers}
+            fingerprints={fingerprints}
+            ownFingerprint={ownFingerprint}
+            verify={verify}
+            unverify={unverify}
+          />
         </section>
 
         {isHost && joinRequests.length > 0 && (
@@ -484,7 +489,12 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               {activePeers.map(p => (
                 <span key={p} className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full ${p === peerId ? 'bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'}`}>
                   {p === peerId ? `${displayName(p)} (You)` : displayName(p)}
-                  {p !== peerId && safetyNumbers[p] && <span className="text-emerald-600 dark:text-emerald-400 cursor-help" title={`Safety number:\n${safetyNumbers[p]}`}><Fingerprint size={11} /></span>}
+                  {p !== peerId && safetyNumbers[p] && (verifyStatuses[p] === 'verified'
+                    ? <span className="text-emerald-600 dark:text-emerald-400 cursor-help" title={`Verified · Safety number:\n${safetyNumbers[p]}`}><ShieldCheck size={11} /></span>
+                    : verifyStatuses[p] === 'changed'
+                      ? <span className="text-red-500 cursor-help animate-pulse" title={`KEY CHANGED — re-verify · Safety number:\n${safetyNumbers[p]}`}><ShieldAlert size={11} /></span>
+                      : <span className="text-amber-500 cursor-help" title={`Unverified — compare out of band · Safety number:\n${safetyNumbers[p]}`}><ShieldQuestion size={11} /></span>
+                  )}
                   {p !== peerId && (p2pPeers.includes(p)
                     ? <span className="text-cyan-600 dark:text-cyan-400 cursor-help" title="Direct P2P"><Radio size={11} /></span>
                     : <span className="text-slate-400 dark:text-slate-500 cursor-help" title="Relayed"><Server size={11} /></span>
@@ -638,7 +648,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               <button
                 type="button"
                 onClick={() => setAttachMenuOpen(o => !o)}
-                disabled={!isConnected || activePeers.length <= 1 || isPending}
+                disabled={!isConnected || activePeers.length <= 1 || isPending || messagingBlocked}
                 title={`Attach file (max ${formatBytes(MAX_FILE_BYTES)}, encrypted before relay)`}
                 className="h-full px-4 border border-black/10 dark:border-white/10 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition-colors disabled:opacity-20 flex items-center"
               >
@@ -681,7 +691,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               onMouseLeave={stopRecording}
               onTouchStart={(e) => { e.preventDefault(); void startRecording(); }}
               onTouchEnd={(e) => { e.preventDefault(); stopRecording(); }}
-              disabled={!isConnected || activePeers.length <= 1 || isPending}
+              disabled={!isConnected || activePeers.length <= 1 || isPending || messagingBlocked}
               title="Hold to record a voice message, release to send"
               className={`px-4 border transition-colors disabled:opacity-20 flex items-center select-none ${isRecording ? 'border-red-500/60 bg-red-500/15 text-red-500 animate-pulse' : 'border-black/10 dark:border-white/10 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'}`}
             >
@@ -694,13 +704,13 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                 value={input}
                 onChange={(e) => { setInput(e.target.value); sendTyping(); }}
                 onPaste={handlePaste}
-                placeholder="Type encrypted payload..."
+                placeholder={messagingBlocked ? 'Messaging blocked — re-verify contact' : 'Type encrypted payload...'}
                 className="flex-1 bg-transparent border-none outline-none text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-700"
                 autoComplete="off"
-                disabled={activePeers.length <= 1 || isPending}
+                disabled={activePeers.length <= 1 || isPending || messagingBlocked}
               />
             </div>
-            <button type="submit" disabled={!isConnected || !input.trim() || activePeers.length <= 1 || isPending} className="bg-slate-900 dark:bg-white text-white dark:text-black px-10 font-mono text-xs font-bold uppercase transition-all enabled:hover:bg-cyan-600 dark:enabled:hover:bg-cyan-400 disabled:opacity-20 flex items-center gap-2">
+            <button type="submit" disabled={!isConnected || !input.trim() || activePeers.length <= 1 || isPending || messagingBlocked} className="bg-slate-900 dark:bg-white text-white dark:text-black px-10 font-mono text-xs font-bold uppercase transition-all enabled:hover:bg-cyan-600 dark:enabled:hover:bg-cyan-400 disabled:opacity-20 flex items-center gap-2">
               Relay<Terminal size={14} />
             </button>
           </form>
@@ -762,6 +772,15 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           </div>
         </div>
       )}
+
+      <KeyChangeWarning
+        changedPeers={changedPeers}
+        displayName={displayName}
+        safetyNumbers={safetyNumbers}
+        fingerprints={fingerprints}
+        verify={verify}
+        unverify={unverify}
+      />
 
       {/* Right Sidebar (Event Logs) */}
       <aside className={`w-72 lg:w-64 border-l border-black/5 dark:border-white/5 bg-ui-aside dark:bg-brand-aside p-4 flex flex-col shrink-0 z-[70] ${showRightSidebar ? 'fixed inset-y-0 right-0 shadow-2xl overflow-y-auto' : 'hidden lg:flex'}`}>
