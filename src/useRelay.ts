@@ -3,7 +3,7 @@ import { RelayEnvelope, EnvelopeType } from './shared/contracts/v1/envelope';
 import { PeerChannels, NoiseFrame } from './crypto/peer-channels';
 import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
 import { useP2P } from './useP2P';
-import { requiresDirectPath } from './transport/p2p-policy';
+import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
 import { randomId } from './random';
 import { buildJoinCredentials } from './membership-store';
 import {
@@ -11,7 +11,15 @@ import {
   encodeFileAttachment,
   decodeFileAttachment,
   isWithinFileLimit,
+  isWithinP2PFileLimit,
 } from './file-transfer';
+import {
+  createFileStream,
+  blobSource,
+  decodeFileStreamInit,
+  frameFileId,
+  FileStreamReceiver,
+} from './crypto/file-stream';
 import { encryptFileData, FileCipher } from './file-crypto';
 import { toBase64 } from './crypto/noise-primitives';
 import { MessageOutbox, WILDCARD_RECIPIENT } from './outbox-store';
@@ -30,6 +38,9 @@ export interface LocalMessage extends RelayEnvelope {
   deleted?: boolean;
   file?: FileAttachment;
   locked?: boolean; // sender-side flag: this file was sent password-protected
+  progress?: number; // 0..1 while a streamed file is in flight
+  fileUrl?: string; // object URL for a streamed file (sender echo or completed receive)
+  fileError?: string; // set when a streamed transfer is rejected or interrupted
 }
 
 export function useRelay(sessionId: string | null, peerId: string | null) {
@@ -54,6 +65,8 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   const flushingRef = useRef<boolean>(false);
   const mailboxRef = useRef<PeerMailbox>(new PeerMailbox());
   const handleEnvelopeRef = useRef<((env: RelayEnvelope) => void) | null>(null);
+  const handleBinaryRef = useRef<((fromPeerId: string, data: ArrayBuffer) => void) | null>(null);
+  const streamRecvRef = useRef<Map<string, { receiver: FileStreamReceiver; from: string; nonce: string; sessionId: string }>>(new Map());
   const activePeersRef = useRef<string[]>([]);
   const readSentRef = useRef<Set<string>>(new Set());
   const pingTimestampRef = useRef<Map<string, number>>(new Map());
@@ -109,6 +122,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       } catch {
         // Ignore malformed data-channel frames.
       }
+    }, []),
+    onBinary: useCallback((from: string, data: ArrayBuffer) => {
+      handleBinaryRef.current?.(from, data);
     }, []),
   });
 
@@ -323,12 +339,14 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       // Tier-2 mailbox: hold a copy for any addressed peer who is currently
       // absent, to forward on their return. The blob stays sealed for the final
       // recipient — we are only a carrier (see peer-mailbox.ts).
-      if (env.type === EnvelopeType.NOISE_MESSAGE || env.type === EnvelopeType.FILE) {
+      if (env.type === EnvelopeType.NOISE_MESSAGE) {
         mailboxRef.current.hold(env, new Set(activePeersRef.current));
       }
 
       // File attachments are encrypted exactly like NOISE_MESSAGE; the cleartext
-      // is a JSON-encoded FileAttachment that never reaches the relay.
+      // is a JSON-encoded FileAttachment (single-shot) or a FileStreamInit whose
+      // bulk chunks follow as raw binary over the data channel. Neither reaches
+      // the relay.
       if (env.type === EnvelopeType.FILE) {
         const mgr = channelsRef.current;
         let decoded: string | null = null;
@@ -338,6 +356,28 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
           decoded = null;
         }
         if (decoded === null) return;
+
+        // A streamed transfer opens with a FileStreamInit carrying the per-file
+        // key; register a receiver and show a 0% placeholder. The bytes arrive
+        // out-of-band as binary frames, so we never mailbox-hold a useless init.
+        const init = decodeFileStreamInit(decoded);
+        if (init) {
+          const nonce = env.nonce;
+          if (!streamRecvRef.current.has(init.fileId)) {
+            const receiver = new FileStreamReceiver(init, (rcv, total) => {
+              const ratio = total > 0 ? rcv / total : 0;
+              setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: ratio } : m)));
+            });
+            streamRecvRef.current.set(init.fileId, { receiver, from: env.from, nonce, sessionId: env.sessionId });
+            setMessages(prev => {
+              if (prev.some(m => m.nonce === nonce)) return prev;
+              return [...prev, { ...env, payload: '', file: { name: init.name, mime: init.mime, size: init.size, data: '' }, progress: 0, status: 'delivered', deliveredTo: [], seenBy: [] }];
+            });
+          }
+          return;
+        }
+
+        mailboxRef.current.hold(env, new Set(activePeersRef.current));
         const att = decodeFileAttachment(decoded);
         if (!att) return;
 
@@ -388,6 +428,48 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     };
 
     handleEnvelopeRef.current = handleEnvelope;
+
+    // Raw binary frames carry streamed file chunks. Route each to its registered
+    // receiver by the fileId in the frame header. A failed AEAD tag throws and
+    // rejects the entire transfer; a completed transfer resolves to a Blob whose
+    // object URL the UI renders, and we ACK the original init nonce.
+    const handleBinary = (fromPeerId: string, ab: ArrayBuffer) => {
+      const frame = new Uint8Array(ab);
+      const fileId = frameFileId(frame);
+      if (!fileId) return;
+      const entry = streamRecvRef.current.get(fileId);
+      if (!entry || entry.from !== fromPeerId) return;
+
+      try {
+        entry.receiver.acceptFrame(frame);
+      } catch {
+        streamRecvRef.current.delete(fileId);
+        setMessages(prev => prev.map(m =>
+          m.nonce === entry.nonce
+            ? { ...m, fileError: 'Transfer rejected — a chunk failed authentication', progress: undefined }
+            : m));
+        return;
+      }
+
+      if (entry.receiver.isDone) {
+        streamRecvRef.current.delete(fileId);
+        const url = URL.createObjectURL(entry.receiver.result());
+        setMessages(prev => prev.map(m =>
+          m.nonce === entry.nonce ? { ...m, fileUrl: url, progress: 1, status: 'delivered' } : m));
+        if (peerId) {
+          dispatch({
+            sessionId: entry.sessionId,
+            from: peerId,
+            type: EnvelopeType.ACK,
+            timestamp: Date.now(),
+            nonce: randomId(),
+            payload: entry.nonce,
+          });
+        }
+      }
+    };
+
+    handleBinaryRef.current = handleBinary;
 
     socket.onopen = () => {
       console.log('WS Connected');
@@ -571,6 +653,60 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     });
   }, [sessionId, peerId, dispatch]);
 
+  // Streams a file over the direct mesh in AEAD-sealed chunks: a FileStreamInit
+  // (carrying the per-file key) goes through the ratchet first, then the bulk
+  // chunks follow as raw ArrayBuffers — never base64, never the relay. Sender
+  // memory stays bounded: chunks are sliced from the File on demand and never
+  // held all at once.
+  const sendFileStream = useCallback(async (file: File): Promise<{ ok: boolean; error?: string }> => {
+    const mgr = channelsRef.current;
+    if (!mgr || !sessionId || !peerId) return { ok: false, error: 'Secure channel not ready' };
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    if (!p2pRef.current.allConnected(others)) {
+      return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
+    }
+
+    const { init, frames } = createFileStream(blobSource(file), {
+      name: file.name || 'file',
+      mime: file.type || 'application/octet-stream',
+    });
+    const nonce = randomId();
+    const initEnvelope: RelayEnvelope = {
+      sessionId, from: peerId, type: EnvelopeType.FILE, timestamp: Date.now(), nonce,
+      payload: JSON.stringify(mgr.encryptForAll(JSON.stringify(init))),
+    };
+    if (!dispatchDirect(initEnvelope)) {
+      return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
+    }
+
+    const url = URL.createObjectURL(file);
+    setMessages(prev => [...prev, {
+      ...initEnvelope, payload: '', file: { name: init.name, mime: init.mime, size: file.size, data: '' },
+      fileUrl: url, progress: 0, status: 'sent', deliveredTo: [], seenBy: [],
+    }]);
+
+    try {
+      let done = 0;
+      for await (const frame of frames()) {
+        if (!p2pRef.current.allConnected(others)) throw new Error('PEER_LEFT');
+        while (others.some(id => p2pRef.current.bufferedAmount(id) > P2P_STREAM_HIGH_WATER_BYTES)) {
+          await new Promise(resolve => setTimeout(resolve, 15));
+        }
+        for (const id of others) {
+          if (!p2pRef.current.sendBinaryDirect(id, frame.buffer)) throw new Error('SEND_FAILED');
+        }
+        done += 1;
+        const ratio = init.chunks > 0 ? done / init.chunks : 1;
+        setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: ratio } : m)));
+      }
+      setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: 1 } : m)));
+      return { ok: true };
+    } catch {
+      setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, fileError: 'Direct transfer interrupted' } : m)));
+      return { ok: false, error: 'Direct transfer interrupted' };
+    }
+  }, [sessionId, peerId, dispatchDirect]);
+
   const sendFile = useCallback(async (
     file: File,
     opts: SendFileOptions = {},
@@ -578,7 +714,11 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     if (!isConnected || !sessionId || !peerId || activePeers.length <= 1) {
       return { ok: false, error: 'No peers connected' };
     }
-    if (!isWithinFileLimit(file.size)) {
+    // Large, unlocked media streams over the direct mesh in chunks (higher cap,
+    // bounded memory); everything else takes the single-envelope path. Password
+    // locks pre-encrypt to one blob, so they stay on the single-shot path.
+    const stream = requiresDirectPath(file.size) && !opts.password;
+    if (!(stream ? isWithinP2PFileLimit(file.size) : isWithinFileLimit(file.size))) {
       return { ok: false, error: 'File exceeds size limit' };
     }
     // Never let a file leave unencrypted: require the E2E channel manager. The
@@ -587,6 +727,8 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     if (!channelsRef.current) {
       return { ok: false, error: 'Secure channel not ready' };
     }
+
+    if (stream) return sendFileStream(file);
 
     const bytes = new Uint8Array(await file.arrayBuffer());
 
@@ -641,7 +783,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }]);
 
     return { ok: true };
-  }, [isConnected, sessionId, peerId, activePeers.length, dispatch, dispatchDirect]);
+  }, [isConnected, sessionId, peerId, activePeers.length, dispatch, dispatchDirect, sendFileStream]);
 
   const editMessage = useCallback((targetNonce: string, newText: string) => {
     if (!sessionId || !peerId || !newText.trim()) return;

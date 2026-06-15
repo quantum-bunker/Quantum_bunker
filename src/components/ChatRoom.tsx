@@ -31,9 +31,9 @@ function highlightMatches(text: string, query: string): React.ReactNode {
   );
 }
 
-function renderAttachment(att: import('../file-transfer').FileAttachment): React.ReactNode {
+function renderAttachment(att: import('../file-transfer').FileAttachment, urlOverride?: string): React.ReactNode {
   const kind = attachmentKind(att.mime);
-  const url = attachmentDataUrl(att);
+  const url = urlOverride ?? attachmentDataUrl(att);
   if (kind === 'image') {
     return (
       <a href={url} target="_blank" rel="noopener noreferrer" className="block">
@@ -67,6 +67,40 @@ function renderAttachment(att: import('../file-transfer').FileAttachment): React
       </span>
       <Download size={14} className="text-slate-400 ml-auto shrink-0" />
     </a>
+  );
+}
+
+// A streamed file mid-transfer: chunks are arriving over the direct mesh. Shows
+// a live progress bar until the receiver reassembles and verifies every chunk.
+function StreamingAttachment({ att, progress }: { att: FileAttachment; progress: number }) {
+  const pct = Math.round(Math.min(Math.max(progress, 0), 1) * 100);
+  return (
+    <div className="flex flex-col gap-2 px-3 py-2.5 border border-cyan-500/20 bg-cyan-500/5 min-w-[14rem]">
+      <div className="flex items-center gap-2 min-w-0">
+        <Loader2 size={16} className="text-cyan-600 dark:text-cyan-400 shrink-0 animate-spin" />
+        <span className="min-w-0">
+          <span className="block text-xs font-mono text-slate-700 dark:text-slate-200 truncate">{att.name}</span>
+          <span className="block text-[9px] font-mono text-slate-400">{formatBytes(att.size)} · receiving {pct}%</span>
+        </span>
+      </div>
+      <div className="h-1 w-full bg-black/10 dark:bg-white/10 overflow-hidden">
+        <div className="h-full bg-cyan-500 transition-[width] duration-150" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// A streamed transfer that failed authentication — one corrupted chunk rejects
+// the whole file, so nothing is rendered or downloadable.
+function FailedAttachment({ att, error }: { att: FileAttachment; error: string }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2.5 border border-red-500/30 bg-red-500/5 min-w-[14rem]">
+      <Ban size={16} className="text-red-500 shrink-0" />
+      <span className="min-w-0">
+        <span className="block text-xs font-mono text-slate-700 dark:text-slate-200 truncate">{att.name}</span>
+        <span className="block text-[9px] font-mono text-red-500">{error}</span>
+      </span>
+    </div>
   );
 }
 
@@ -572,7 +606,15 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                     >
                       <div className={`relative z-10 ${antiCaptureTextClass}`}>
                         {msg.file
-                          ? (msg.file.enc ? <LockedAttachment att={msg.file} /> : renderAttachment(msg.file))
+                          ? (msg.fileError
+                              ? <FailedAttachment att={msg.file} error={msg.fileError} />
+                              : msg.fileUrl
+                                ? renderAttachment(msg.file, msg.fileUrl)
+                                : msg.file.enc
+                                  ? <LockedAttachment att={msg.file} />
+                                  : (msg.progress !== undefined && msg.progress < 1)
+                                    ? <StreamingAttachment att={msg.file} progress={msg.progress} />
+                                    : renderAttachment(msg.file))
                           : (trimmedQuery ? highlightMatches(msg.payload, trimmedQuery) : msg.payload)}
                         {msg.locked && <span className="mt-1 flex items-center gap-1 text-[9px] font-mono uppercase text-amber-600 dark:text-amber-400"><LockKeyhole size={10} /> password-protected · share the password separately</span>}
                         {msg.edited && <span className="ml-2 text-[9px] text-slate-400 dark:text-slate-600 italic">(edited)</span>}

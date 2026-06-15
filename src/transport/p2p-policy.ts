@@ -14,6 +14,12 @@
 // file is the source of truth.
 export const P2P_FILE_THRESHOLD_BYTES = 64 * 1024;
 
+// Backpressure ceiling for streamed file chunks. The sender pauses yielding new
+// chunks while a peer's data-channel send buffer sits above this, so a fast
+// producer can never balloon the SCTP buffer to gigabytes for a slow link.
+// Named here (not a magic number) per the same constants discipline.
+export const P2P_STREAM_HIGH_WATER_BYTES = 1 * 1024 * 1024;
+
 // True when `byteSize` must take the direct path. Text messages and receipts
 // fall well under the threshold and keep relaying; files/images/audio/video
 // exceed it and are forced peer-to-peer.

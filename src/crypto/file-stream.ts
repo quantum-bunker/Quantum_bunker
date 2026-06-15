@@ -20,7 +20,7 @@ const MAGIC = 0x51424653; // "QBFS"
 const VERSION = 1;
 const FILE_ID_BYTES = 16;
 const KEY_BYTES = 32;
-const HEADER_BYTES = 14; // magic(4) + version(1) + reserved(1) + index(4) + total(4)
+const HEADER_BYTES = 30; // magic(4) + version(1) + reserved(1) + index(4) + total(4) + fileId(16)
 const TAG_BYTES = 16;
 
 export interface FileStreamInit {
@@ -30,6 +30,38 @@ export interface FileStreamInit {
   mime: string;
   size: number;
   chunks: number;
+}
+
+// Validates a decrypted JSON blob as a FileStreamInit. Used to tell a streamed
+// transfer's opening control message apart from a single-shot FileAttachment,
+// both of which arrive ratchet-encrypted inside a FILE envelope.
+export function decodeFileStreamInit(raw: string): FileStreamInit | null {
+  let o: Record<string, unknown>;
+  try {
+    o = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!o || typeof o !== 'object') return null;
+  if (
+    typeof o.fileId !== 'string' ||
+    typeof o.key !== 'string' ||
+    typeof o.name !== 'string' ||
+    typeof o.mime !== 'string' ||
+    typeof o.size !== 'number' ||
+    typeof o.chunks !== 'number' ||
+    o.chunks < 0
+  ) {
+    return null;
+  }
+  return {
+    fileId: o.fileId,
+    key: o.key,
+    name: o.name.slice(0, 256),
+    mime: o.mime.slice(0, 128),
+    size: o.size,
+    chunks: o.chunks,
+  };
 }
 
 export interface ChunkSource {
@@ -65,7 +97,7 @@ function nonce(index: number): Uint8Array {
   return n;
 }
 
-function frameHeader(index: number, total: number): Uint8Array {
+function frameHeader(fileId: Uint8Array, index: number, total: number): Uint8Array {
   const h = new Uint8Array(HEADER_BYTES);
   const view = new DataView(h.buffer);
   view.setUint32(0, MAGIC, false);
@@ -73,10 +105,12 @@ function frameHeader(index: number, total: number): Uint8Array {
   view.setUint8(5, 0);
   view.setUint32(6, index, false);
   view.setUint32(10, total, false);
+  h.set(fileId, 14);
   return h;
 }
 
 interface ParsedFrame {
+  fileId: Uint8Array;
   index: number;
   total: number;
   header: Uint8Array;
@@ -88,6 +122,7 @@ function parseFrame(frame: Uint8Array): ParsedFrame | null {
   const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
   if (view.getUint32(0, false) !== MAGIC || view.getUint8(4) !== VERSION) return null;
   return {
+    fileId: frame.subarray(14, 14 + FILE_ID_BYTES),
     index: view.getUint32(6, false),
     total: view.getUint32(10, false),
     header: frame.subarray(0, HEADER_BYTES),
@@ -95,11 +130,19 @@ function parseFrame(frame: Uint8Array): ParsedFrame | null {
   };
 }
 
-// Associated data binds the per-chunk header AND the file identity, so a sealed
-// chunk cannot be replayed into a different transfer that happens to share a
-// derived key collision, nor reordered within its own transfer.
-function chunkAd(fileId: Uint8Array, header: Uint8Array): Uint8Array {
-  return concatBytes(fileId, header);
+// The whole header — including the fileId and per-chunk index — is the AEAD
+// associated data, so a sealed chunk cannot be reordered within its transfer
+// nor spliced into a different one without breaking authentication.
+function chunkAd(header: Uint8Array): Uint8Array {
+  return header;
+}
+
+// Routing key for the receiver registry: the base64 fileId carried in a frame's
+// header, or null if the frame is malformed. Lets a binary handler dispatch a
+// chunk to the right transfer without holding the AEAD key.
+export function frameFileId(frame: Uint8Array): string | null {
+  const parsed = parseFrame(frame);
+  return parsed ? toBase64(parsed.fileId) : null;
 }
 
 export function createFileStream(
@@ -126,8 +169,8 @@ export function createFileStream(
       const start = index * FILE_CHUNK_BYTES;
       const end = Math.min(start + FILE_CHUNK_BYTES, source.size);
       const plain = await source.slice(start, end);
-      const header = frameHeader(index, total);
-      const sealed = aead.seal(nonce(index), plain, chunkAd(fileId, header));
+      const header = frameHeader(fileId, index, total);
+      const sealed = aead.seal(nonce(index), plain, chunkAd(header));
       yield concatBytes(header, sealed);
     }
   }
@@ -151,11 +194,14 @@ export class FileStreamReceiver {
   private failed = false;
   private complete = false;
 
+  private readonly fileIdB64: string;
+
   constructor(
     private readonly init: FileStreamInit,
     private readonly onProgress?: FileStreamProgress,
   ) {
     this.fileId = fromBase64(init.fileId);
+    this.fileIdB64 = init.fileId;
     this.aeadKey = deriveAeadKey(this.fileId, fromBase64(init.key));
   }
 
@@ -170,11 +216,16 @@ export class FileStreamReceiver {
   acceptFrame(frame: Uint8Array): void {
     if (this.failed || this.complete) throw new Error('FILE_STREAM_CLOSED');
     const parsed = parseFrame(frame);
-    if (!parsed || parsed.total !== this.init.chunks || parsed.index !== this.next) {
+    if (
+      !parsed ||
+      parsed.total !== this.init.chunks ||
+      parsed.index !== this.next ||
+      toBase64(parsed.fileId) !== this.fileIdB64
+    ) {
       return this.fail();
     }
     const aead = new ChaCha20Poly1305(this.aeadKey);
-    const plain = aead.open(nonce(parsed.index), parsed.ciphertext, chunkAd(this.fileId, parsed.header));
+    const plain = aead.open(nonce(parsed.index), parsed.ciphertext, chunkAd(parsed.header));
     if (plain === null) return this.fail();
 
     this.parts.push(plain);
