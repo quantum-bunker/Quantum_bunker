@@ -2,12 +2,22 @@ import { generateKeyPair } from '@stablelib/x25519';
 import { HandshakeState, KeyPair } from './noise-xx';
 import { DoubleRatchet, DRKeyPair, RatchetSlot } from './double-ratchet';
 import {
+  generateKemKeyPair,
+  kemEncapsulate,
+  kemDecapsulate,
+  combineHybridSecret,
+  KemKeyPair,
+} from './hybrid-kem';
+import {
   utf8,
   fromUtf8,
   toBase64,
   fromBase64,
   sha256,
+  concatBytes,
 } from './noise-primitives';
+
+const DR_KEY_BYTES = 32;
 
 export interface NoiseFrame {
   kind: 'noise';
@@ -31,6 +41,11 @@ interface Channel {
   remoteStaticKey: Uint8Array | null;
   drKeyPair: DRKeyPair;
   remoteDRKey: Uint8Array | null;
+  // Post-quantum KEM state. The responder holds a decapsulation keypair until
+  // the initiator's message 3 ciphertext arrives; both sides end up with the
+  // same pqSecret, which is mixed into the session root in finalize().
+  kemKeyPair: KemKeyPair | null;
+  pqSecret: Uint8Array | null;
 }
 
 interface PeerChannelsOptions {
@@ -66,6 +81,8 @@ export class PeerChannels {
       remoteStaticKey: null,
       drKeyPair: generateKeyPair(),
       remoteDRKey: null,
+      kemKeyPair: null,
+      pqSecret: null,
     };
   }
 
@@ -91,28 +108,37 @@ export class PeerChannels {
       const data = fromBase64(frame.data);
 
       if (channel.initiator && frame.step === 2) {
-        // Responder's message 2 payload carries their initial DR public key (encrypted).
-        const payload = channel.hs.readMessage(data);
-        if (payload.length === 32) channel.remoteDRKey = payload;
-        // Initiator sends message 3 with own DR public key as payload.
+        // Responder's message 2 payload carries their DR public key plus the
+        // ML-KEM encapsulation key. We encapsulate against it and ship the
+        // resulting ciphertext back inside message 3.
+        const { drKey, kemBlob } = splitHandshakePayload(channel.hs.readMessage(data));
+        channel.remoteDRKey = drKey;
+        const { ciphertext, sharedSecret } = kemEncapsulate(kemBlob);
+        channel.pqSecret = sharedSecret;
         this.sendNoise(fromPeerId, {
           kind: 'noise', to: fromPeerId, step: 3,
-          data: toBase64(channel.hs.writeMessage(channel.drKeyPair.publicKey)),
+          data: toBase64(channel.hs.writeMessage(joinHandshakePayload(channel.drKeyPair.publicKey, ciphertext))),
         });
         this.finalize(channel);
 
       } else if (!channel.initiator && frame.step === 1) {
         channel.hs.readMessage(data);
-        // Responder sends message 2 with own DR public key as payload.
+        // Responder advertises its DR public key plus a fresh ML-KEM public key
+        // for the initiator to encapsulate against.
+        channel.kemKeyPair = generateKemKeyPair();
         this.sendNoise(fromPeerId, {
           kind: 'noise', to: fromPeerId, step: 2,
-          data: toBase64(channel.hs.writeMessage(channel.drKeyPair.publicKey)),
+          data: toBase64(channel.hs.writeMessage(joinHandshakePayload(channel.drKeyPair.publicKey, channel.kemKeyPair.publicKey))),
         });
 
       } else if (!channel.initiator && frame.step === 3) {
-        // Initiator's message 3 payload carries their initial DR public key (encrypted).
-        const payload = channel.hs.readMessage(data);
-        if (payload.length === 32) channel.remoteDRKey = payload;
+        // Initiator's message 3 payload carries their DR public key plus the
+        // ML-KEM ciphertext we decapsulate to recover the shared PQ secret.
+        const { drKey, kemBlob } = splitHandshakePayload(channel.hs.readMessage(data));
+        channel.remoteDRKey = drKey;
+        if (channel.kemKeyPair) {
+          channel.pqSecret = kemDecapsulate(channel.kemKeyPair.secretKey, kemBlob);
+        }
         this.finalize(channel);
       }
     } catch {
@@ -125,11 +151,14 @@ export class PeerChannels {
     channel.safetyNumber = safetyNumber(channel.hs.handshakeHash);
     channel.remoteStaticKey = channel.hs.remoteStaticKey;
 
-    if (channel.remoteDRKey) {
-      const chainKey = channel.hs.chainKey;
+    if (channel.remoteDRKey && channel.pqSecret) {
+      // Hybrid root: the classical Noise chaining key combined with the ML-KEM
+      // shared secret. Both must be present — we never fall back to a PQ-only
+      // or classical-only root.
+      const root = combineHybridSecret(channel.hs.chainKey, channel.pqSecret);
       channel.ratchet = channel.initiator
-        ? DoubleRatchet.initAlice(chainKey, channel.drKeyPair, channel.remoteDRKey)
-        : DoubleRatchet.initBob(chainKey, channel.drKeyPair, channel.remoteDRKey);
+        ? DoubleRatchet.initAlice(root, channel.drKeyPair, channel.remoteDRKey)
+        : DoubleRatchet.initBob(root, channel.drKeyPair, channel.remoteDRKey);
     }
 
     channel.phase = 'ready';
@@ -209,6 +238,18 @@ function safetyNumber(handshakeHash: Uint8Array): string {
     groups.push((view.getUint32(0) % 100000).toString().padStart(5, '0'));
   }
   return groups.join(' ');
+}
+
+// Handshake payloads carry the 32-byte DR public key followed by a variable
+// PQ blob (ML-KEM public key in message 2, ciphertext in message 3). The DR key
+// is fixed-width so the split is unambiguous.
+function joinHandshakePayload(drKey: Uint8Array, kemBlob: Uint8Array): Uint8Array {
+  return concatBytes(drKey, kemBlob);
+}
+
+function splitHandshakePayload(payload: Uint8Array): { drKey: Uint8Array; kemBlob: Uint8Array } {
+  if (payload.length <= DR_KEY_BYTES) throw new Error('NOISE_PAYLOAD_TOO_SHORT');
+  return { drKey: payload.slice(0, DR_KEY_BYTES), kemBlob: payload.slice(DR_KEY_BYTES) };
 }
 
 function toHex(bytes: Uint8Array): string {
