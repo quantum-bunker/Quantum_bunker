@@ -21,6 +21,9 @@ interface WebRTCMeshOptions {
   selfId: string;
   sendRtc: (toPeerId: string, frame: RtcFrame) => void;
   onMessage: (fromPeerId: string, data: string) => void;
+  // Raw binary frames (streamed file chunks). Separate from onMessage so the
+  // string control path and the ArrayBuffer media path never collide.
+  onBinary?: (fromPeerId: string, data: ArrayBuffer) => void;
   onStateChange: () => void;
   // ICE config for every peer connection. Defaults to getIceConfig() (empty,
   // host-candidates-only) for backward compatibility; the direct media path
@@ -135,6 +138,7 @@ export class WebRTCMesh {
 
   private wireDataChannel(peerId: string, peer: MeshPeer, dc: RTCDataChannel): void {
     peer.dc = dc;
+    dc.binaryType = 'arraybuffer';
     dc.onopen = () => {
       peer.state = 'connected';
       this.opts.onStateChange();
@@ -143,7 +147,10 @@ export class WebRTCMesh {
       if (peer.state !== 'failed') peer.state = 'closed';
       this.opts.onStateChange();
     };
-    dc.onmessage = (e) => this.opts.onMessage(peerId, e.data as string);
+    dc.onmessage = (e) => {
+      if (typeof e.data === 'string') this.opts.onMessage(peerId, e.data);
+      else if (e.data instanceof ArrayBuffer) this.opts.onBinary?.(peerId, e.data);
+    };
   }
 
   private markFailed(peerId: string): void {
@@ -154,6 +161,23 @@ export class WebRTCMesh {
   }
 
   send(peerId: string, data: string): boolean {
+    const peer = this.peers.get(peerId);
+    if (!peer || peer.state !== 'connected' || !peer.dc || peer.dc.readyState !== 'open') return false;
+    try {
+      peer.dc.send(data);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Buffered amount for a peer's channel, used by the streamer to apply
+  // backpressure (pause yielding chunks until the SCTP buffer drains).
+  bufferedAmount(peerId: string): number {
+    return this.peers.get(peerId)?.dc?.bufferedAmount ?? Infinity;
+  }
+
+  sendBinary(peerId: string, data: ArrayBuffer): boolean {
     const peer = this.peers.get(peerId);
     if (!peer || peer.state !== 'connected' || !peer.dc || peer.dc.readyState !== 'open') return false;
     try {

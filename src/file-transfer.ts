@@ -15,8 +15,18 @@ export type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
 // value is duplicated here with the backend kept as the source of truth.
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
+// Mirrors RELAY_LIMITS.MAX_P2P_FILE_BYTES and RELAY_LIMITS.FILE_CHUNK_BYTES.
+// The direct P2P path streams files in fixed chunks and never relays the bytes,
+// so it permits a much larger cap than MAX_FILE_BYTES.
+export const MAX_P2P_FILE_BYTES = 256 * 1024 * 1024;
+export const FILE_CHUNK_BYTES = 64 * 1024;
+
 export function isWithinFileLimit(size: number): boolean {
   return Number.isFinite(size) && size > 0 && size <= MAX_FILE_BYTES;
+}
+
+export function isWithinP2PFileLimit(size: number): boolean {
+  return Number.isFinite(size) && size > 0 && size <= MAX_P2P_FILE_BYTES;
 }
 
 export function formatBytes(bytes: number): string {
