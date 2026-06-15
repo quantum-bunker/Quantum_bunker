@@ -17,6 +17,14 @@ export const RELAY_LIMITS = {
   // Per-file raw byte cap (client-enforced before encryption). Supports short
   // videos; kept under MAX_PAYLOAD_BYTES to leave room for encoding overhead.
   MAX_FILE_BYTES: 5 * 1024 * 1024, // 5MB
+  // Raw byte cap for files sent over the direct P2P data channel (chunked,
+  // streamed). These bytes never touch the blind relay, so the cap is far higher
+  // than MAX_FILE_BYTES — bounded only by the receiver streaming to a Blob.
+  MAX_P2P_FILE_BYTES: 256 * 1024 * 1024, // 256MB
+  // Fixed plaintext size of each streamed file chunk. Each chunk is AEAD-sealed
+  // independently, so this bounds the working-set memory of both sender and
+  // receiver regardless of total file size.
+  FILE_CHUNK_BYTES: 64 * 1024, // 64KB
   WS_MAX_FRAME_BYTES: 16 * 1024 * 1024 + 64 * 1024, // envelope payload + JSON overhead
   TIMESTAMP_TOLERANCE_MS: 60 * 1000, // 1 minute drift allowed
   MSG_PER_SECOND_LIMIT: 10,
