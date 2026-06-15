@@ -1,5 +1,6 @@
 import { ChaCha20Poly1305 } from '@stablelib/chacha20poly1305';
-import { FILE_CHUNK_BYTES } from '../file-transfer';
+import { FILE_CHUNK_BYTES, decodeFileLock, resolveMime } from '../file-transfer';
+import type { FileLock } from '../file-crypto';
 import { hkdf, toBase64, fromBase64, concatBytes } from './noise-primitives';
 
 // Streamed file transfer over the direct P2P data channel.
@@ -28,8 +29,15 @@ export interface FileStreamInit {
   key: string; // base64 of the 32-byte per-file key (carried inside the ratchet)
   name: string;
   mime: string;
-  size: number;
+  size: number; // original file size, for UI display
   chunks: number;
+  // When set, the streamed BYTES are a password-encrypted ciphertext of the
+  // original file (approach (a)): the transport carries the ciphertext, and the
+  // receiver hands the reassembled ciphertext to the existing single-shot
+  // decryptFileData via the locked-attachment UI. `encSize` is the ciphertext
+  // byte length used for the completeness check; `size` stays the original.
+  enc?: FileLock;
+  encSize?: number;
 }
 
 // Validates a decrypted JSON blob as a FileStreamInit. Used to tell a streamed
@@ -54,6 +62,14 @@ export function decodeFileStreamInit(raw: string): FileStreamInit | null {
   ) {
     return null;
   }
+  let enc: FileLock | undefined;
+  let encSize: number | undefined;
+  if (o.enc !== undefined) {
+    const lock = decodeFileLock(o.enc);
+    if (lock === null || typeof o.encSize !== 'number' || o.encSize < 0) return null;
+    enc = lock;
+    encSize = o.encSize;
+  }
   return {
     fileId: o.fileId,
     key: o.key,
@@ -61,6 +77,7 @@ export function decodeFileStreamInit(raw: string): FileStreamInit | null {
     mime: o.mime.slice(0, 128),
     size: o.size,
     chunks: o.chunks,
+    ...(enc ? { enc, encSize } : {}),
   };
 }
 
@@ -147,20 +164,24 @@ export function frameFileId(frame: Uint8Array): string | null {
 
 export function createFileStream(
   source: ChunkSource,
-  meta: { name: string; mime: string },
+  meta: { name: string; mime: string; size?: number; enc?: FileLock },
 ): { init: FileStreamInit; frames: () => AsyncGenerator<Uint8Array> } {
   const fileId = crypto.getRandomValues(new Uint8Array(FILE_ID_BYTES));
   const fileKey = crypto.getRandomValues(new Uint8Array(KEY_BYTES));
   const aeadKey = deriveAeadKey(fileId, fileKey);
   const total = chunkCount(source.size);
 
+  // For a password-locked stream the source bytes ARE the ciphertext, so
+  // `size` reports the original file size for the UI while `encSize` carries the
+  // streamed (ciphertext) length used for the receiver's completeness check.
   const init: FileStreamInit = {
     fileId: toBase64(fileId),
     key: toBase64(fileKey),
     name: meta.name,
     mime: meta.mime,
-    size: source.size,
+    size: meta.enc ? (meta.size ?? source.size) : source.size,
     chunks: total,
+    ...(meta.enc ? { enc: meta.enc, encSize: source.size } : {}),
   };
 
   async function* frames(): AsyncGenerator<Uint8Array> {
@@ -231,14 +252,35 @@ export class FileStreamReceiver {
     this.parts.push(plain);
     this.next += 1;
     this.received += plain.length;
-    this.onProgress?.(this.received, this.init.size);
+    this.onProgress?.(this.received, this.expectedBytes);
     if (this.next === this.init.chunks) this.complete = true;
+  }
+
+  // For a password-locked stream the transported bytes are the ciphertext, so
+  // completeness is measured against encSize, not the original file size.
+  private get expectedBytes(): number {
+    return this.init.enc ? (this.init.encSize ?? 0) : this.init.size;
   }
 
   result(): Blob {
     if (this.failed) throw new Error('FILE_STREAM_REJECTED');
-    if (!this.complete || this.received !== this.init.size) throw new Error('FILE_STREAM_INCOMPLETE');
-    return new Blob(this.parts, { type: this.init.mime });
+    if (!this.complete || this.received !== this.expectedBytes) throw new Error('FILE_STREAM_INCOMPLETE');
+    return new Blob(this.parts, { type: resolveMime(this.init.mime, this.init.name) });
+  }
+
+  // For the password-locked path: the reassembled bytes are the still-encrypted
+  // ciphertext, handed to the existing single-shot decryptFileData via the UI.
+  resultBytes(): Uint8Array {
+    if (this.failed) throw new Error('FILE_STREAM_REJECTED');
+    if (!this.complete || this.received !== this.expectedBytes) throw new Error('FILE_STREAM_INCOMPLETE');
+    const out = new Uint8Array(this.received);
+    let off = 0;
+    for (const p of this.parts) {
+      const u8 = p instanceof Uint8Array ? p : new Uint8Array(p as ArrayBuffer);
+      out.set(u8, off);
+      off += u8.length;
+    }
+    return out;
   }
 
   private fail(): never {

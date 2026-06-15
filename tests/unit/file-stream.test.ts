@@ -5,7 +5,9 @@ import {
   chunkCount,
   FileStreamReceiver,
 } from '../../src/crypto/file-stream';
-import { FILE_CHUNK_BYTES } from '../../src/file-transfer';
+import { FILE_CHUNK_BYTES, resolveMime } from '../../src/file-transfer';
+import { encryptFileData, decryptFileData } from '../../src/file-crypto';
+import { fromBase64 } from '../../src/crypto/noise-primitives';
 
 function randomBytes(n: number): Uint8Array {
   const b = new Uint8Array(n);
@@ -100,5 +102,78 @@ describe('file-stream', () => {
     // Receiver initialized with B's init (different random key) must reject A's frames.
     const receiver = new FileStreamReceiver(b.init);
     expect(() => receiver.acceptFrame(aFrames[0])).toThrow(/REJECTED/);
+  });
+});
+
+describe('resolveMime', () => {
+  it('preserves a specific valid MIME', () => {
+    expect(resolveMime('video/mp4', 'clip.webm')).toBe('video/mp4');
+    expect(resolveMime('image/png', 'a.jpg')).toBe('image/png');
+  });
+
+  it('infers from extension when MIME is empty or generic', () => {
+    expect(resolveMime('', 'clip.mp4')).toBe('video/mp4');
+    expect(resolveMime('application/octet-stream', 'clip.webm')).toBe('video/webm');
+    expect(resolveMime('BINARY/OCTET-STREAM', 'clip.mov')).toBe('video/quicktime');
+    expect(resolveMime('', 'clip.mkv')).toBe('video/x-matroska');
+    expect(resolveMime('', 'clip.m4v')).toBe('video/x-m4v');
+    expect(resolveMime('', 'clip.avi')).toBe('video/x-msvideo');
+    expect(resolveMime('', 'clip.ogv')).toBe('video/ogg');
+  });
+
+  it('falls back to octet-stream for an unknown extension and empty MIME', () => {
+    expect(resolveMime('', 'data.xyz')).toBe('application/octet-stream');
+    expect(resolveMime('', 'noext')).toBe('application/octet-stream');
+  });
+
+  it('keeps the original generic MIME when extension is unknown', () => {
+    expect(resolveMime('application/octet-stream', 'data.xyz')).toBe('application/octet-stream');
+  });
+});
+
+describe('password-protected streamed file (approach a)', () => {
+  it('round-trips: ciphertext streams, reassembles, decryptFileData yields original', async () => {
+    const original = randomBytes(FILE_CHUNK_BYTES * 2 + 99);
+    const password = 'correct horse battery staple';
+    const sealed = await encryptFileData(original, password, 'AES-GCM');
+    const ciphertext = fromBase64(sealed.data);
+
+    const { init, frames } = createFileStream(bytesSource(ciphertext), {
+      name: 'secret.mp4',
+      mime: 'video/mp4',
+      size: original.length,
+      enc: sealed.lock,
+    });
+    expect(init.enc).toEqual(sealed.lock);
+    expect(init.size).toBe(original.length);
+    expect(init.encSize).toBe(ciphertext.length);
+
+    const receiver = new FileStreamReceiver(init);
+    for (const frame of await collect(frames())) receiver.acceptFrame(frame);
+    expect(receiver.isDone).toBe(true);
+
+    const reassembled = receiver.resultBytes();
+    expect(reassembled).toEqual(ciphertext);
+
+    const opened = await decryptFileData(sealed.data, sealed.lock, password);
+    expect(opened).not.toBeNull();
+    expect(new Uint8Array(opened as Uint8Array)).toEqual(original);
+  });
+
+  it('wrong password fails to decrypt the reassembled ciphertext', async () => {
+    const original = randomBytes(FILE_CHUNK_BYTES + 5);
+    const sealed = await encryptFileData(original, 'right', 'ChaCha20-Poly1305');
+    const ciphertext = fromBase64(sealed.data);
+
+    const { init, frames } = createFileStream(bytesSource(ciphertext), {
+      name: 'x.bin', mime: 'application/octet-stream', size: original.length, enc: sealed.lock,
+    });
+    const receiver = new FileStreamReceiver(init);
+    for (const frame of await collect(frames())) receiver.acceptFrame(frame);
+
+    const reassembled = receiver.resultBytes();
+    const { toBase64 } = await import('../../src/crypto/noise-primitives');
+    const opened = await decryptFileData(toBase64(reassembled), sealed.lock, 'wrong');
+    expect(opened).toBeNull();
   });
 });
