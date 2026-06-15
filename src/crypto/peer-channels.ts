@@ -16,6 +16,7 @@ import {
   sha256,
   concatBytes,
 } from './noise-primitives';
+import { padPlaintext, unpadPlaintext } from './message-padding';
 
 const DR_KEY_BYTES = 32;
 
@@ -166,7 +167,9 @@ export class PeerChannels {
 
   encryptForAll(plaintext: string): EncryptedPayload {
     const c: Record<string, RatchetSlot> = {};
-    const bytes = utf8(plaintext);
+    // Pad to a fixed size bucket before encryption so the relay sees a uniform
+    // ciphertext length regardless of the true message size.
+    const bytes = padPlaintext(utf8(plaintext));
     for (const [peerId, channel] of this.channels) {
       if (channel.phase === 'ready' && channel.ratchet) {
         c[peerId] = channel.ratchet.encrypt(bytes);
@@ -181,7 +184,7 @@ export class PeerChannels {
     const slot = payload?.c?.[this.selfId];
     if (!slot || typeof slot !== 'object' || !slot.ct || !slot.h) return null;
     try {
-      return fromUtf8(channel.ratchet.decrypt(slot));
+      return fromUtf8(unpadPlaintext(channel.ratchet.decrypt(slot)));
     } catch {
       return null;
     }

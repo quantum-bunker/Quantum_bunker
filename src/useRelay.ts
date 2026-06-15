@@ -150,6 +150,15 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }
   }, [peerId, sendRaw]);
 
+  // Relays a non-interactive frame (receipt/edit/delete) after a small random
+  // delay to blunt timing correlation against the message it refers to. Kept
+  // tiny (mirrors PADDING.TIMING_JITTER_MAX_MS in constants.ts) so it is not
+  // felt in the UI; interactive sends never go through here.
+  const dispatchJittered = useCallback((env: RelayEnvelope) => {
+    const delay = Math.random() * 120;
+    setTimeout(() => dispatch(env), delay);
+  }, [dispatch]);
+
   // Routes an envelope EXCLUSIVELY over the direct mesh. Returns false (sending
   // nothing) when any peer lacks an open channel — the caller surfaces an error
   // rather than relaying. This is the no-fallback path for large media so its
@@ -386,7 +395,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
           return [...prev, { ...env, payload: '', file: att, status: 'delivered', deliveredTo: [], seenBy: [] }];
         });
 
-        dispatch({
+        dispatchJittered({
           sessionId: env.sessionId,
           from: peerId,
           type: EnvelopeType.ACK,
@@ -416,7 +425,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         });
 
         // Auto-reply with ACK over whichever transport is active.
-        dispatch({
+        dispatchJittered({
           sessionId: env.sessionId,
           from: peerId,
           type: EnvelopeType.ACK,
@@ -457,7 +466,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         setMessages(prev => prev.map(m =>
           m.nonce === entry.nonce ? { ...m, fileUrl: url, progress: 1, status: 'delivered' } : m));
         if (peerId) {
-          dispatch({
+          dispatchJittered({
             sessionId: entry.sessionId,
             from: peerId,
             type: EnvelopeType.ACK,
@@ -568,7 +577,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     };
 
     socketRef.current = socket;
-  }, [sessionId, peerId, sendRaw, sendSignal, dispatch]);
+  }, [sessionId, peerId, sendRaw, sendSignal, dispatch, dispatchJittered]);
 
   const sendMessage = useCallback((payload: string, type: EnvelopeType = EnvelopeType.NOISE_MESSAGE) => {
     if (!sessionId || !peerId) return;
@@ -643,7 +652,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     if (!sessionId || !peerId || readSentRef.current.has(nonce)) return;
     readSentRef.current.add(nonce);
 
-    dispatch({
+    dispatchJittered({
       sessionId,
       from: peerId,
       type: EnvelopeType.READ,
@@ -651,7 +660,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       nonce: randomId(),
       payload: nonce,
     });
-  }, [sessionId, peerId, dispatch]);
+  }, [sessionId, peerId, dispatchJittered]);
 
   // Streams a file over the direct mesh in AEAD-sealed chunks: a FileStreamInit
   // (carrying the per-file key) goes through the ratchet first, then the bulk
