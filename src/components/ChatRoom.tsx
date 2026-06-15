@@ -271,6 +271,11 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
     fileInputRef.current?.click();
   };
 
+  const openLargeFilePicker = () => {
+    setAttachMenuOpen(false);
+    largeFileInputRef.current?.click();
+  };
+
   const submitProtected = async () => {
     if (!pwModal) return;
     if (!pwModal.password) { setFileError('Password required'); return; }
@@ -740,12 +745,23 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                     <button
                       type="button"
                       onClick={() => openFilePicker(false)}
-                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-cyan-500/10 transition-colors"
+                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-cyan-500/10 transition-colors border-b border-black/5 dark:border-white/5"
                     >
                       <ShieldCheck size={15} className="text-cyan-600 dark:text-cyan-400 shrink-0 mt-0.5" />
                       <span>
                         <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-200">Send regular</span>
                         <span className="block text-[9px] font-mono text-slate-400">E2E encrypted end-to-end</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openLargeFilePicker}
+                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-violet-500/10 transition-colors"
+                    >
+                      <HardDriveUpload size={15} className="text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" />
+                      <span>
+                        <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-200">Send large file</span>
+                        <span className="block text-[9px] font-mono text-slate-400">Direct P2P up to {formatBytes(MAX_P2P_FILE_BYTES)} — never touches the server</span>
                       </span>
                     </button>
                   </div>
