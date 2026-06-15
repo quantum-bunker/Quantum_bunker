@@ -770,16 +770,6 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
             </div>
             <button
               type="button"
-              onClick={() => largeFileInputRef.current?.click()}
-              disabled={!isConnected || activePeers.length <= 1 || isPending || messagingBlocked}
-              title={`Send large file directly peer-to-peer (up to ${formatBytes(MAX_P2P_FILE_BYTES)}) — bytes never touch the server`}
-              className="h-full px-4 border border-black/10 dark:border-white/10 text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:border-violet-500/40 transition-colors disabled:opacity-20 flex items-center gap-2"
-            >
-              <HardDriveUpload size={16} />
-              <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-widest">Large file</span>
-            </button>
-            <button
-              type="button"
               onMouseDown={() => void startRecording()}
               onMouseUp={stopRecording}
               onMouseLeave={stopRecording}
