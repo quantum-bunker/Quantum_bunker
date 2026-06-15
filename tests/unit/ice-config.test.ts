@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseIceServers } from '../../src/transport/ice-config';
+import { parseIceServers, getP2PIceConfig } from '../../src/transport/ice-config';
 
 describe('parseIceServers', () => {
   it('defaults to an empty list (no third-party STUN)', () => {
@@ -29,5 +29,15 @@ describe('parseIceServers', () => {
     expect(parseIceServers('[not json')).toEqual([]);
     expect(parseIceServers('[1, 2, 3]')).toEqual([]); // entries without `urls`
     expect(parseIceServers('{"urls":"x"}')).toEqual([{ urls: ['{"urls":"x"}'] }]); // non-array treated as URL token
+  });
+});
+
+describe('getP2PIceConfig', () => {
+  it('defaults to free public STUN (no TURN) when unconfigured', () => {
+    const cfg = getP2PIceConfig();
+    const urls = (cfg.iceServers ?? []).flatMap(s => (Array.isArray(s.urls) ? s.urls : [s.urls]));
+    // At least one STUN server, and never a (bandwidth-costing) TURN server.
+    expect(urls.some(u => u.startsWith('stun:'))).toBe(true);
+    expect(urls.some(u => u.startsWith('turn:') || u.startsWith('turns:'))).toBe(false);
   });
 });
