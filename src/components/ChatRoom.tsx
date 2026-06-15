@@ -7,6 +7,7 @@ import { normalizeQuery, messageMatches, splitOnQuery } from '../message-search'
 import { attachmentKind, attachmentDataUrl, formatBytes, MAX_FILE_BYTES, FileAttachment } from '../file-transfer';
 import { decryptFileData, FileCipher } from '../file-crypto';
 import { toBase64 } from '../crypto/noise-primitives';
+import { KeyPair } from '../crypto/noise-xx';
 import { VOICE_MIME_CANDIDATES, chooseSupportedMime, voiceFileName } from '../voice-record';
 import { useContactVerification } from '../useContactVerification';
 import { ContactVerificationPanel, KeyChangeWarning } from './ContactVerification';
@@ -21,6 +22,7 @@ interface ChatRoomProps {
   isExpired: boolean;
   securityOptions: { blur: boolean; antiCapture: boolean };
   reset: () => void;
+  identity?: KeyPair | null;
 }
 
 function highlightMatches(text: string, query: string): React.ReactNode {
@@ -159,8 +161,8 @@ function LockedAttachment({ att }: { att: FileAttachment }) {
   );
 }
 
-function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset }: ChatRoomProps) {
-  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed } = useRelay(sessionId, peerId);
+function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset, identity }: ChatRoomProps) {
+  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed } = useRelay(sessionId, peerId, identity);
   const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
   const otherPeers = activePeers.filter(p => p !== peerId);
   const messagingBlocked = changedPeers.length > 0;
