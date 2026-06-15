@@ -17,12 +17,14 @@ import {
 import {
   createFileStream,
   blobSource,
+  bytesSource,
+  ChunkSource,
   decodeFileStreamInit,
   frameFileId,
   FileStreamReceiver,
 } from './crypto/file-stream';
-import { encryptFileData, FileCipher } from './file-crypto';
-import { toBase64 } from './crypto/noise-primitives';
+import { encryptFileData, FileCipher, FileLock } from './file-crypto';
+import { toBase64, fromBase64 } from './crypto/noise-primitives';
 import { MessageOutbox, WILDCARD_RECIPIENT } from './outbox-store';
 import { PeerMailbox } from './peer-mailbox';
 
@@ -71,7 +73,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const mailboxRef = useRef<PeerMailbox>(new PeerMailbox());
   const handleEnvelopeRef = useRef<((env: RelayEnvelope) => void) | null>(null);
   const handleBinaryRef = useRef<((fromPeerId: string, data: ArrayBuffer) => void) | null>(null);
-  const streamRecvRef = useRef<Map<string, { receiver: FileStreamReceiver; from: string; nonce: string; sessionId: string }>>(new Map());
+  const streamRecvRef = useRef<Map<string, { receiver: FileStreamReceiver; from: string; nonce: string; sessionId: string; enc?: FileLock }>>(new Map());
   const activePeersRef = useRef<string[]>([]);
   const readSentRef = useRef<Set<string>>(new Set());
   const pingTimestampRef = useRef<Map<string, number>>(new Map());
@@ -383,10 +385,10 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
               const ratio = total > 0 ? rcv / total : 0;
               setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: ratio } : m)));
             });
-            streamRecvRef.current.set(init.fileId, { receiver, from: env.from, nonce, sessionId: env.sessionId });
+            streamRecvRef.current.set(init.fileId, { receiver, from: env.from, nonce, sessionId: env.sessionId, enc: init.enc });
             setMessages(prev => {
               if (prev.some(m => m.nonce === nonce)) return prev;
-              return [...prev, { ...env, payload: '', file: { name: init.name, mime: init.mime, size: init.size, data: '' }, progress: 0, status: 'delivered', deliveredTo: [], seenBy: [] }];
+              return [...prev, { ...env, payload: '', file: { name: init.name, mime: init.mime, size: init.size, data: '' }, locked: !!init.enc, progress: 0, status: 'delivered', deliveredTo: [], seenBy: [] }];
             });
           }
           return;
@@ -468,9 +470,21 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
       if (entry.receiver.isDone) {
         streamRecvRef.current.delete(fileId);
-        const url = URL.createObjectURL(entry.receiver.result());
-        setMessages(prev => prev.map(m =>
-          m.nonce === entry.nonce ? { ...m, fileUrl: url, progress: 1, status: 'delivered' } : m));
+        if (entry.enc) {
+          // The reassembled bytes are still password-encrypted; expose them as a
+          // locked attachment so the existing LockedAttachment UI can unlock via
+          // decryptFileData. No object URL — that would render unlocked content.
+          const ciphertext = entry.receiver.resultBytes();
+          const lock = entry.enc;
+          setMessages(prev => prev.map(m =>
+            m.nonce === entry.nonce && m.file
+              ? { ...m, file: { ...m.file, data: toBase64(ciphertext), enc: lock }, progress: 1, status: 'delivered' }
+              : m));
+        } else {
+          const url = URL.createObjectURL(entry.receiver.result());
+          setMessages(prev => prev.map(m =>
+            m.nonce === entry.nonce ? { ...m, fileUrl: url, progress: 1, status: 'delivered' } : m));
+        }
         if (peerId) {
           dispatchJittered({
             sessionId: entry.sessionId,
@@ -673,7 +687,10 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   // chunks follow as raw ArrayBuffers — never base64, never the relay. Sender
   // memory stays bounded: chunks are sliced from the File on demand and never
   // held all at once.
-  const sendFileStream = useCallback(async (file: File): Promise<{ ok: boolean; error?: string }> => {
+  const sendFileStream = useCallback(async (
+    file: File,
+    opts: SendFileOptions = {},
+  ): Promise<{ ok: boolean; error?: string }> => {
     const mgr = channelsRef.current;
     if (!mgr || !sessionId || !peerId) return { ok: false, error: 'Secure channel not ready' };
     if (!isWithinP2PFileLimit(file.size)) return { ok: false, error: 'File exceeds size limit' };
@@ -682,10 +699,26 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
     }
 
-    const { init, frames } = createFileStream(blobSource(file), {
-      name: file.name || 'file',
-      mime: file.type || 'application/octet-stream',
-    });
+    const name = file.name || 'file';
+    const mime = file.type || 'application/octet-stream';
+
+    // Approach (a): a password-locked large file is password-encrypted whole
+    // into a single ciphertext, then the ciphertext bytes are streamed. The
+    // receiver reassembles the ciphertext and unlocks it through the existing
+    // single-shot decryptFileData (LockedAttachment UI) — no per-chunk password
+    // layer, no ChatRoom changes. The whole file is read into memory once here.
+    let source: ChunkSource;
+    let enc: FileLock | undefined;
+    if (opts.password) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const sealed = await encryptFileData(bytes, opts.password, opts.algo ?? 'AES-GCM');
+      source = bytesSource(fromBase64(sealed.data));
+      enc = sealed.lock;
+    } else {
+      source = blobSource(file);
+    }
+
+    const { init, frames } = createFileStream(source, { name, mime, size: file.size, enc });
     const nonce = randomId();
     const initEnvelope: RelayEnvelope = {
       sessionId, from: peerId, type: EnvelopeType.FILE, timestamp: Date.now(), nonce,
@@ -695,10 +728,12 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
     }
 
+    // The sender always sees their own file via the original File object URL,
+    // even when it was password-locked for recipients.
     const url = URL.createObjectURL(file);
     setMessages(prev => [...prev, {
       ...initEnvelope, payload: '', file: { name: init.name, mime: init.mime, size: file.size, data: '' },
-      fileUrl: url, progress: 0, status: 'sent', deliveredTo: [], seenBy: [],
+      fileUrl: url, locked: !!enc, progress: 0, status: 'sent', deliveredTo: [], seenBy: [],
     }]);
 
     try {
@@ -708,8 +743,11 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
         while (others.some(id => p2pRef.current.bufferedAmount(id) > P2P_STREAM_HIGH_WATER_BYTES)) {
           await new Promise(resolve => setTimeout(resolve, 15));
         }
+        // A frame may be a view over a larger buffer; slice the exact range once
+        // and reuse the same ArrayBuffer for every peer.
+        const ab = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength);
         for (const id of others) {
-          if (!p2pRef.current.sendBinaryDirect(id, frame.buffer)) throw new Error('SEND_FAILED');
+          if (!p2pRef.current.sendBinaryDirect(id, ab)) throw new Error('SEND_FAILED');
         }
         done += 1;
         const ratio = init.chunks > 0 ? done / init.chunks : 1;
@@ -730,10 +768,11 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     if (!isConnected || !sessionId || !peerId || activePeers.length <= 1) {
       return { ok: false, error: 'No peers connected' };
     }
-    // Large, unlocked media streams over the direct mesh in chunks (higher cap,
-    // bounded memory); everything else takes the single-envelope path. Password
-    // locks pre-encrypt to one blob, so they stay on the single-shot path.
-    const stream = requiresDirectPath(file.size) && !opts.password;
+    // Large media streams over the direct mesh in chunks (higher cap, bounded
+    // transport memory); everything else takes the single-envelope path.
+    // Password-locked large files also stream — the ciphertext is what gets
+    // chunked (see sendFileStream / approach (a)).
+    const stream = requiresDirectPath(file.size);
     if (!(stream ? isWithinP2PFileLimit(file.size) : isWithinFileLimit(file.size))) {
       return { ok: false, error: 'File exceeds size limit' };
     }
@@ -744,7 +783,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       return { ok: false, error: 'Secure channel not ready' };
     }
 
-    if (stream) return sendFileStream(file);
+    if (stream) return sendFileStream(file, opts);
 
     const bytes = new Uint8Array(await file.arrayBuffer());
 

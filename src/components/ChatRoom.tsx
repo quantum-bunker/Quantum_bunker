@@ -92,6 +92,20 @@ function StreamingAttachment({ att, progress }: { att: FileAttachment; progress:
   );
 }
 
+// A file whose bytes have not arrived yet (empty data, no URL, no error): renders
+// a safe placeholder so we never feed an empty base64 blob into an <img>/<video>.
+function PendingAttachment({ att }: { att: FileAttachment }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2.5 border border-cyan-500/20 bg-cyan-500/5 min-w-[14rem]">
+      <Loader2 size={16} className="text-cyan-600 dark:text-cyan-400 shrink-0 animate-spin" />
+      <span className="min-w-0">
+        <span className="block text-xs font-mono text-slate-700 dark:text-slate-200 truncate">{att.name}</span>
+        <span className="block text-[9px] font-mono text-slate-400">{formatBytes(att.size)} · awaiting data…</span>
+      </span>
+    </div>
+  );
+}
+
 // A streamed transfer that failed authentication — one corrupted chunk rejects
 // the whole file, so nothing is rendered or downloadable.
 function FailedAttachment({ att, error }: { att: FileAttachment; error: string }) {
@@ -638,7 +652,9 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                                   ? <LockedAttachment att={msg.file} />
                                   : (msg.progress !== undefined && msg.progress < 1)
                                     ? <StreamingAttachment att={msg.file} progress={msg.progress} />
-                                    : renderAttachment(msg.file))
+                                    : msg.file.data
+                                      ? renderAttachment(msg.file)
+                                      : <PendingAttachment att={msg.file} />)
                           : (trimmedQuery ? highlightMatches(msg.payload, trimmedQuery) : msg.payload)}
                         {msg.locked && <span className="mt-1 flex items-center gap-1 text-[9px] font-mono uppercase text-amber-600 dark:text-amber-400"><LockKeyhole size={10} /> password-protected · share the password separately</span>}
                         {msg.edited && <span className="ml-2 text-[9px] text-slate-400 dark:text-slate-600 italic">(edited)</span>}
@@ -702,6 +718,12 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /> Recording — release to encrypt &amp; send
             </div>
           )}
+          {activePeers.length > 1 && directLinkFailed && (
+            <div className="max-w-5xl mx-auto mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px] font-mono uppercase tracking-tighter">
+              <Ban size={12} className="shrink-0" />
+              <span>Direct P2P link unavailable — large files &amp; video cannot be sent until a peer-to-peer connection is established.</span>
+            </div>
+          )}
           <form onSubmit={handleSend} className="h-12 flex gap-4 max-w-5xl mx-auto">
             <input
               ref={fileInputRef}
@@ -722,7 +744,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                 type="button"
                 onClick={() => setAttachMenuOpen(o => !o)}
                 disabled={!isConnected || activePeers.length <= 1 || isPending || messagingBlocked}
-                title={`Attach file (max ${formatBytes(MAX_FILE_BYTES)}, encrypted before relay)`}
+                title={`Attach a file — up to ${formatBytes(MAX_FILE_BYTES)} via encrypted relay, or up to ${formatBytes(MAX_P2P_FILE_BYTES)} direct P2P (large files)`}
                 className="h-full px-4 border border-black/10 dark:border-white/10 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition-colors disabled:opacity-20 flex items-center"
               >
                 <Paperclip size={16} />

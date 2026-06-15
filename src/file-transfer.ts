@@ -36,6 +36,40 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const GENERIC_MIMES = new Set(['', 'application/octet-stream', 'binary/octet-stream']);
+
+const EXT_MIME: Record<string, string> = {
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  mkv: 'video/x-matroska',
+  m4v: 'video/x-m4v',
+  avi: 'video/x-msvideo',
+  ogv: 'video/ogg',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav',
+};
+
+// A specific, valid MIME is kept verbatim. Only when the provided value is
+// empty or a generic octet-stream do we try to infer a better type from the
+// file extension — otherwise video/audio playback breaks on streamed files.
+export function resolveMime(mime: string, name: string): string {
+  const lower = mime.trim().toLowerCase();
+  if (!GENERIC_MIMES.has(lower) && lower.includes('/')) return mime;
+  const dot = name.lastIndexOf('.');
+  if (dot >= 0) {
+    const ext = name.slice(dot + 1).toLowerCase();
+    if (EXT_MIME[ext]) return EXT_MIME[ext];
+  }
+  return mime || 'application/octet-stream';
+}
+
 export function attachmentKind(mime: string): AttachmentKind {
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/')) return 'audio';
@@ -80,7 +114,7 @@ export function decodeFileAttachment(raw: string): FileAttachment | null {
   };
 }
 
-function decodeFileLock(raw: unknown): FileLock | null {
+export function decodeFileLock(raw: unknown): FileLock | null {
   if (!raw || typeof raw !== 'object') return null;
   const e = raw as Record<string, unknown>;
   if (
