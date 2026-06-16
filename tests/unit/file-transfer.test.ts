@@ -47,6 +47,11 @@ describe('file-transfer', () => {
     it('builds a base64 data URL', () => {
       expect(attachmentDataUrl(sample)).toBe('data:image/png;base64,AAEC');
     });
+
+    it('infers a playable type from the filename when the source mime is generic', () => {
+      const vid: FileAttachment = { name: 'clip.mp4', mime: 'application/octet-stream', size: 9, data: 'AAEC' };
+      expect(attachmentDataUrl(vid)).toBe('data:video/mp4;base64,AAEC');
+    });
   });
 
   describe('encode / decode round trip', () => {
