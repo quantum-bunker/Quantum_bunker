@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Info, Trash2, ShieldCheck, ShieldAlert, ShieldQuestion, Fingerprint, Radio, Server, Activity, Terminal, X, Share2, QrCode, Search, Pencil, Check, Ban, Paperclip, Download, FileText, Mic, Lock, LockKeyhole, Loader2, HardDriveUpload, UserPlus, UserCheck } from 'lucide-react';
+import { Info, Trash2, ShieldCheck, ShieldAlert, ShieldQuestion, Fingerprint, Radio, Server, Activity, Terminal, X, Share2, QrCode, Search, Pencil, Check, Ban, Paperclip, Download, FileText, Mic, Lock, LockKeyhole, Loader2, HardDriveUpload, UserPlus, UserCheck, Video } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useRelay } from '../useRelay';
 import { normalizeQuery, messageMatches, splitOnQuery } from '../message-search';
@@ -11,6 +11,7 @@ import { KeyPair } from '../crypto/noise-xx';
 import { VOICE_MIME_CANDIDATES, chooseSupportedMime, voiceFileName } from '../voice-record';
 import { useContactVerification } from '../useContactVerification';
 import { ContactVerificationPanel, KeyChangeWarning } from './ContactVerification';
+import CallView from './CallView';
 
 interface ChatRoomProps {
   sessionId: string;
@@ -176,7 +177,7 @@ function LockedAttachment({ att }: { att: FileAttachment }) {
 }
 
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset, identity }: ChatRoomProps) {
-  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist } = useRelay(sessionId, peerId, identity);
+  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
   const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
   const otherPeers = activePeers.filter(p => p !== peerId);
   const messagingBlocked = changedPeers.length > 0;
@@ -493,13 +494,22 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         <div className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-black/5 dark:border-white/5 bg-ui-elevated dark:bg-brand-elevated">
           <button onClick={() => setShowLeftSidebar(true)} className="flex items-center gap-2 text-[10px] font-mono uppercase text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"><Info size={14} /> Vault Info</button>
           <div className="flex items-center gap-3">
+            <button onClick={() => call.startCall()} disabled={!callEligiblePeer || !isConnected || call.callState !== 'idle'} className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-slate-500 enabled:hover:text-cyan-600 dark:enabled:hover:text-cyan-400 disabled:opacity-30 transition-colors" title={callEligiblePeer ? 'Start a 1-on-1 video call' : 'Video calls are available only in 1-on-1 sessions'}><Video size={14} /> Call</button>
             <button onClick={() => setShowSearch(s => !s)} className={`flex items-center gap-1.5 text-[10px] font-mono uppercase transition-colors ${showSearch ? 'text-cyan-600 dark:text-cyan-400' : 'text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400'}`}><Search size={14} /> Search</button>
             <button onClick={() => setShowRightSidebar(true)} className="flex items-center gap-2 text-[10px] font-mono uppercase text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors">Logs <Activity size={14} /></button>
           </div>
         </div>
 
-        {/* Desktop toolbar: search + logs toggles */}
+        {/* Desktop toolbar: call + search + logs toggles */}
         <div className="hidden lg:flex items-center justify-end gap-4 px-6 py-2 border-b border-black/5 dark:border-white/5 bg-ui-elevated dark:bg-brand-elevated">
+          <button
+            onClick={() => call.startCall()}
+            disabled={!callEligiblePeer || !isConnected || call.callState !== 'idle'}
+            className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors text-slate-500 enabled:hover:text-cyan-600 dark:enabled:hover:text-cyan-400 disabled:opacity-30 mr-auto"
+            title={callEligiblePeer ? 'Start a 1-on-1 video call' : 'Video calls are available only in 1-on-1 sessions'}
+          >
+            <Video size={13} /> Video Call
+          </button>
           <button onClick={() => setShowSearch(s => !s)} className={`flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors ${showSearch ? 'text-cyan-600 dark:text-cyan-400' : 'text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400'}`} title="Search messages">
             <Search size={13} /> Search
           </button>
@@ -921,6 +931,15 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      <CallView call={call} displayName={displayName} />
+
+      {call.callError && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[130] flex items-center gap-2 px-4 py-2 bg-red-500/90 text-white text-[10px] font-mono uppercase tracking-widest shadow-2xl">
+          <Ban size={12} /> {call.callError}
+          <button onClick={() => call.endCall()} className="ml-2 hover:opacity-70"><X size={12} /></button>
         </div>
       )}
 

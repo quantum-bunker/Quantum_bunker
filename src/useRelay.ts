@@ -3,7 +3,9 @@ import { RelayEnvelope, EnvelopeType } from './shared/contracts/v1/envelope';
 import { PeerChannels, NoiseFrame } from './crypto/peer-channels';
 import { KeyPair } from './crypto/noise-xx';
 import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
+import { CallSignal } from './transport/call-connection';
 import { useP2P } from './useP2P';
+import { useCall } from './useCall';
 import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
 import { randomId } from './random';
 import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
@@ -155,6 +157,19 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   // re-render — they only ever call the latest p2p methods.
   const p2pRef = useRef(p2p);
   p2pRef.current = p2p;
+
+  // Video calling is offered only when the session is exactly 1-on-1 (one other
+  // peer, not group mode). The eligible peer drives useCall; null disables it.
+  const callablePeers = activePeers.filter(id => id !== peerId);
+  const callEligiblePeer = !isGroup && callablePeers.length === 1 ? callablePeers[0] : null;
+
+  const sendCallSignal = useCallback((to: string, signal: Omit<CallSignal, 'kind' | 'to'>) => {
+    sendSignal({ kind: 'call', to, ...signal });
+  }, [sendSignal]);
+
+  const call = useCall({ selfId: peerId, peerId: callEligiblePeer, sendCallSignal });
+  const callRef = useRef(call);
+  callRef.current = call;
 
   // Routes an envelope over the direct mesh when every peer has an open data
   // channel; otherwise over the WS relay. All-or-nothing per message keeps the
@@ -351,6 +366,8 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
             refreshCrypto();
           } else if (sig.kind === 'rtc') {
             p2pRef.current.handleSignal(env.from, sig as RtcFrame);
+          } else if (sig.kind === 'call') {
+            callRef.current.handleSignal(env.from, sig as CallSignal);
           } else if (sig.kind === 'typing') {
             setTypingAt(prev => {
               if (sig.state) return { ...prev, [env.from]: Date.now() };
@@ -1034,5 +1051,5 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist };
+  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
 }
