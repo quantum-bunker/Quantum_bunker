@@ -89,7 +89,7 @@ export function useCall(opts: UseCallOptions): UseCall {
       onRemoteStream: (s) => setRemoteStream(s),
       onState: (s: CallConnectionState) => {
         if (s === 'connected') setState('active');
-        else if (s === 'failed') teardown('Could not establish a direct media path. If you and the other person are on different networks (mobile data, different ISPs), a TURN relay server is required — see VITE_TURN_URL in the deployment docs.');
+        else if (s === 'failed') teardown('Could not establish a direct media path. Calls go peer-to-peer only — media is never relayed through a server. This works on the same network, and across networks when a self-hosted STUN server is configured (VITE_STUN_URL). Some networks (symmetric NAT / mobile data) cannot be punched without a relay and are unsupported by design.');
         else if (s === 'closed' && stateRef.current !== 'idle') teardown();
       },
     });
