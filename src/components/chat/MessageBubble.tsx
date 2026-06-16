@@ -33,13 +33,14 @@ export function MessageBubble({
   onMarkRead: (nonce: string) => void;
 }) {
   const isMe = msg.from === peerId;
-  const accentColor = msg.from === 'peer-a' ? 'cyan' : 'orange';
+  const accentColor = msg.from === 'peer-a' ? 'accent' : 'orange';
   const alignClass = isMe ? 'items-end self-end text-right' : 'items-start self-start text-left';
-  const dotColor = accentColor === 'cyan' ? 'bg-cyan-500' : 'bg-orange-500';
-  const headColor = accentColor === 'cyan' ? 'text-cyan-600 dark:text-cyan-500' : 'text-orange-600 dark:text-amber-500';
-  const borderClass = isMe ? 'border-r-2 border-r-cyan-500' : 'border-l-2 border-l-orange-500';
+  const dotColor = accentColor === 'accent' ? 'qb-accent-bg' : 'bg-orange-500';
+  const headColor = accentColor === 'accent' ? 'qb-accent-text' : 'text-orange-600 dark:text-amber-500';
+  const borderClass = isMe ? 'border-r-2' : 'border-l-2 border-l-orange-500';
+  const borderStyle = isMe ? { borderRightColor: 'var(--qb-accent)' } : undefined;
   const statusText = msg.status === 'seen' ? '✓✓' : msg.status === 'delivered' ? '✓✓' : msg.status === 'sent' ? '✓' : '...';
-  const statusColor = msg.status === 'seen' ? 'text-cyan-500' : 'text-slate-400';
+  const statusColor = msg.status === 'seen' ? 'qb-accent-text' : 'text-slate-400';
   const deliveredList = msg.deliveredTo.length > 0 ? msg.deliveredTo.map(p => p.replace('peer-', '')).join(', ') : 'None';
   const seenList = msg.seenBy.length > 0 ? msg.seenBy.map(p => p.replace('peer-', '')).join(', ') : 'None';
   const titleText = `Delivered to: ${deliveredList}\nSeen by: ${seenList}`;
@@ -47,19 +48,19 @@ export function MessageBubble({
 
   return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className={`flex flex-col max-w-[85%] ${alignClass} relative group/message`}>
-      <div className="flex items-center gap-2 mb-1.5 px-1 text-ui-muted dark:text-slate-600">
+      <div className="flex items-center gap-2 mb-1.5 px-1 qb-muted">
         {!isMe && <span className={`w-1.5 h-1.5 ${dotColor}`} />}
-        <span className={`text-[10px] font-mono ${headColor} uppercase font-bold tracking-tighter`}>{displayName(msg.from)}</span>
-        <span className="text-[9px] font-mono italic">{new Date(msg.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as any)}</span>
-        {isMe && <span className={`text-[10px] font-mono font-bold ${statusColor}`} title={titleText}>{statusText}</span>}
+        <span className={`text-[10px] ${headColor} font-bold tracking-tighter`} style={{ fontFamily: 'var(--qb-font)', textTransform: 'var(--qb-label-tt)' }}>{displayName(msg.from)}</span>
+        <span className="text-[9px] italic" style={{ fontFamily: 'var(--qb-font)' }}>{new Date(msg.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 } as any)}</span>
+        {isMe && <span className={`text-[10px] font-bold ${statusColor}`} style={{ fontFamily: 'var(--qb-font)' }} title={titleText}>{statusText}</span>}
         {isMe && <span className={`w-1.5 h-1.5 ${dotColor}`} />}
       </div>
       {msg.deleted ? (
-        <div className={`p-4 bg-black/[0.02] dark:bg-white/[0.03] border border-dashed border-black/10 dark:border-white/10 ${borderClass} text-sm text-slate-400 dark:text-slate-600 font-mono italic flex items-center gap-2`}>
-          <Ban size={13} /> message deleted
+        <div className={`qb-bubble p-4 border-dashed ${borderClass}`} style={borderStyle}>
+          <span className="text-sm text-slate-400 dark:text-slate-600 italic flex items-center gap-2"><Ban size={13} /> message deleted</span>
         </div>
       ) : isMe && editingNonce === msg.nonce ? (
-        <div className={`p-3 bg-black/[0.02] dark:bg-white/[0.03] border border-cyan-500/40 ${borderClass} flex flex-col gap-2`}>
+        <div className={`qb-bubble p-3 ${borderClass}`} style={{ borderColor: 'var(--qb-accent)', ...borderStyle }}>
           <textarea
             autoFocus
             value={editDraft}
@@ -69,16 +70,17 @@ export function MessageBubble({
               if (e.key === 'Escape') onCancelEdit();
             }}
             rows={2}
-            className="w-full bg-white dark:bg-black/40 border border-black/10 dark:border-white/10 outline-none focus:border-cyan-500/50 text-sm font-mono text-slate-700 dark:text-slate-300 p-2 resize-none text-left"
+            className="qb-input w-full text-sm p-2 resize-none text-left"
           />
-          <div className="flex items-center justify-end gap-2">
-            <button onClick={onCancelEdit} className="flex items-center gap-1 text-[10px] font-mono uppercase text-slate-500 hover:text-slate-900 dark:hover:text-white px-2 py-1"><X size={12} /> Cancel</button>
-            <button onClick={() => onCommitEdit(msg.nonce)} disabled={!editDraft.trim()} className="flex items-center gap-1 text-[10px] font-mono uppercase text-cyan-600 dark:text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-30 px-2 py-1"><Check size={12} /> Save</button>
+          <div className="flex items-center justify-end gap-2 mt-2">
+            <button onClick={onCancelEdit} className="flex items-center gap-1 text-[10px] qb-label hover:qb-title px-2 py-1"><X size={12} /> Cancel</button>
+            <button onClick={() => onCommitEdit(msg.nonce)} disabled={!editDraft.trim()} className="qb-btn-accent flex items-center gap-1 text-[10px] disabled:opacity-30 px-2 py-1"><Check size={12} /> Save</button>
           </div>
         </div>
       ) : (
         <div
-          className={`p-4 bg-black/[0.02] dark:bg-white/[0.03] border border-black/5 dark:border-white/5 ${borderClass} text-sm leading-relaxed text-slate-700 dark:text-slate-300 font-mono shadow-sm dark:shadow-xl relative overflow-hidden group transition-all duration-300 ${blurClass}`}
+          className={`qb-bubble p-4 ${borderClass} text-sm leading-relaxed shadow-sm dark:shadow-xl relative overflow-hidden group transition-all duration-300 ${blurClass}`}
+          style={borderStyle}
           onMouseEnter={() => { if (!isMe) onMarkRead(msg.nonce); }}
           onTouchStart={() => { if (!isMe) onMarkRead(msg.nonce); }}
         >
@@ -86,14 +88,14 @@ export function MessageBubble({
             {msg.file
               ? <MessageAttachment file={msg.file} fileUrl={msg.fileUrl} fileError={msg.fileError} progress={msg.progress} />
               : (query ? highlightMatches(msg.payload, query) : msg.payload)}
-            {msg.locked && <span className="mt-1 flex items-center gap-1 text-[9px] font-mono uppercase text-amber-600 dark:text-amber-400"><LockKeyhole size={10} /> password-protected · share the password separately</span>}
+            {msg.locked && <span className="qb-label mt-1 flex items-center gap-1 text-[9px] text-amber-600 dark:text-amber-400"><LockKeyhole size={10} /> password-protected · share the password separately</span>}
             {msg.edited && <span className="ml-2 text-[9px] text-slate-400 dark:text-slate-600 italic">(edited)</span>}
           </div>
           <div className="absolute inset-0 bg-gradient-to-br from-black/[0.01] dark:from-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           {isMe && (
             <div className="absolute top-1 right-1 z-20 flex items-center gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity">
-              {!msg.file && <button onClick={() => onBeginEdit(msg.nonce, msg.payload)} title="Edit message" className="p-1 bg-white/80 dark:bg-black/60 border border-black/10 dark:border-white/10 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400"><Pencil size={11} /></button>}
-              <button onClick={() => onDelete(msg.nonce)} title="Delete message" className="p-1 bg-white/80 dark:bg-black/60 border border-black/10 dark:border-white/10 text-slate-500 hover:text-red-500"><Trash2 size={11} /></button>
+              {!msg.file && <button onClick={() => onBeginEdit(msg.nonce, msg.payload)} title="Edit message" className="p-1 bg-white/80 dark:bg-black/60 border qb-border text-slate-500 hover:qb-accent-text"><Pencil size={11} /></button>}
+              <button onClick={() => onDelete(msg.nonce)} title="Delete message" className="p-1 bg-white/80 dark:bg-black/60 border qb-border text-slate-500 hover:text-red-500"><Trash2 size={11} /></button>
             </div>
           )}
         </div>

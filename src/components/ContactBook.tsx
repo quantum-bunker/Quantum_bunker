@@ -46,14 +46,14 @@ const ContactBook: React.FC<ContactBookProps> = ({ membership, contacts, hostSes
   };
 
   return (
-    <div className="p-8 glass-panel space-y-6 relative overflow-hidden">
+    <div className="p-8 qb-panel space-y-6 relative overflow-hidden">
       <div className="flex items-center gap-4 relative z-10">
-        <div className="w-12 h-12 bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+        <div className="w-12 h-12 bg-indigo-500/10 border border-indigo-500/30 qb-rounded-sm flex items-center justify-center text-indigo-600 dark:text-indigo-400">
           <UserPlus size={24} />
         </div>
         <div>
-          <h3 className="text-base font-mono font-bold text-slate-900 dark:text-white uppercase tracking-widest">Trusted_Contacts</h3>
-          <p className="text-[11px] text-slate-500 font-mono mt-0.5 uppercase tracking-tighter">Pinned keys — auto-admit, zero host prompt</p>
+          <h3 className="qb-title text-base font-bold tracking-widest">Trusted_Contacts</h3>
+          <p className="qb-muted text-[11px] mt-0.5" style={{ fontFamily: 'var(--qb-font)' }}>Pinned keys — auto-admit, zero host prompt</p>
         </div>
       </div>
 
@@ -140,7 +140,7 @@ const ContactRow: React.FC<ContactRowProps> = ({ contact, hostSessions, onIssueT
   };
 
   return (
-    <div className="border border-black/5 dark:border-white/5 bg-white dark:bg-black/20">
+    <div className="qb-panel-flat">
       <div className="flex items-center gap-3 p-3">
         <div className={`w-7 h-7 shrink-0 flex items-center justify-center border ${intact ? 'border-emerald-500/30 text-emerald-500 bg-emerald-500/10' : 'border-red-500/40 text-red-500 bg-red-500/10'}`} title={intact ? 'Pin intact' : 'KEY MISMATCH — possible impersonation'}>
           {intact ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}

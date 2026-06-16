@@ -32,8 +32,8 @@ export function renderAttachment(att: FileAttachment, urlOverride?: string): Rea
     );
   }
   return (
-    <a href={url} download={att.name} className="flex items-center gap-3 px-3 py-2 border border-cyan-500/20 bg-cyan-500/5 hover:bg-cyan-500/10 transition-colors">
-      <FileText size={20} className="text-cyan-600 dark:text-cyan-400 shrink-0" />
+    <a href={url} download={att.name} className="flex items-center gap-3 px-3 py-2 border qb-accent-border bg-[var(--qb-accent-soft)] hover:opacity-90 transition-colors">
+      <FileText size={20} className="qb-accent-text shrink-0" />
       <span className="min-w-0">
         <span className="block text-xs font-mono text-slate-700 dark:text-slate-200 truncate">{att.name}</span>
         <span className="block text-[9px] font-mono text-slate-400">{formatBytes(att.size)} · click to download</span>
@@ -48,16 +48,16 @@ export function renderAttachment(att: FileAttachment, urlOverride?: string): Rea
 function StreamingAttachment({ att, progress }: { att: FileAttachment; progress: number }) {
   const pct = Math.round(Math.min(Math.max(progress, 0), 1) * 100);
   return (
-    <div className="flex flex-col gap-2 px-3 py-2.5 border border-cyan-500/20 bg-cyan-500/5 min-w-[14rem]">
+    <div className="flex flex-col gap-2 px-3 py-2.5 qb-accent-border border bg-[var(--qb-accent-soft)] min-w-[14rem]">
       <div className="flex items-center gap-2 min-w-0">
-        <Loader2 size={16} className="text-cyan-600 dark:text-cyan-400 shrink-0 animate-spin" />
+        <Loader2 size={16} className="qb-accent-text shrink-0 animate-spin" />
         <span className="min-w-0">
           <span className="block text-xs font-mono text-slate-700 dark:text-slate-200 truncate">{att.name}</span>
           <span className="block text-[9px] font-mono text-slate-400">{formatBytes(att.size)} · receiving {pct}%</span>
         </span>
       </div>
       <div className="h-1 w-full bg-black/10 dark:bg-white/10 overflow-hidden">
-        <div className="h-full bg-cyan-500 transition-[width] duration-150" style={{ width: `${pct}%` }} />
+        <div className="h-full qb-accent-bg transition-[width] duration-150" style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
@@ -67,8 +67,8 @@ function StreamingAttachment({ att, progress }: { att: FileAttachment; progress:
 // a safe placeholder so we never feed an empty base64 blob into an <img>/<video>.
 function PendingAttachment({ att }: { att: FileAttachment }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2.5 border border-cyan-500/20 bg-cyan-500/5 min-w-[14rem]">
-      <Loader2 size={16} className="text-cyan-600 dark:text-cyan-400 shrink-0 animate-spin" />
+    <div className="flex items-center gap-2 px-3 py-2.5 qb-accent-border border bg-[var(--qb-accent-soft)] min-w-[14rem]">
+      <Loader2 size={16} className="qb-accent-text shrink-0 animate-spin" />
       <span className="min-w-0">
         <span className="block text-xs font-mono text-slate-700 dark:text-slate-200 truncate">{att.name}</span>
         <span className="block text-[9px] font-mono text-slate-400">{formatBytes(att.size)} · awaiting data…</span>

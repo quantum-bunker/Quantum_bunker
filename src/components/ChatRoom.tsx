@@ -269,38 +269,38 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
       />
 
       {/* Main chat area */}
-      <section className="flex-1 flex flex-col bg-ui-bg dark:bg-brand-bg relative min-w-0">
-        <div className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-black/5 dark:border-white/5 bg-ui-elevated dark:bg-brand-elevated">
-          <button onClick={() => setShowLeftSidebar(true)} className="flex items-center gap-2 text-[10px] font-mono uppercase text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"><Info size={14} /> Vault Info</button>
+      <section className="qb-app flex-1 flex flex-col relative min-w-0">
+        <div className="qb-surface lg:hidden flex items-center justify-between px-4 py-3 border-b">
+          <button onClick={() => setShowLeftSidebar(true)} className="qb-label flex items-center gap-2 text-[10px] hover:qb-accent-text transition-colors"><Info size={14} /> Vault Info</button>
           <div className="flex items-center gap-3">
-            <button onClick={() => call.startCall()} disabled={!callEligiblePeer || !isConnected || call.callState !== 'idle'} className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-slate-500 enabled:hover:text-cyan-600 dark:enabled:hover:text-cyan-400 disabled:opacity-30 transition-colors" title={callEligiblePeer ? 'Start a 1-on-1 video call' : 'Video calls are available only in 1-on-1 sessions'}><Video size={14} /> Call</button>
-            <button onClick={() => setShowSearch(s => !s)} className={`flex items-center gap-1.5 text-[10px] font-mono uppercase transition-colors ${showSearch ? 'text-cyan-600 dark:text-cyan-400' : 'text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400'}`}><Search size={14} /> Search</button>
-            <button onClick={() => setShowRightSidebar(true)} className="flex items-center gap-2 text-[10px] font-mono uppercase text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors">Logs <Activity size={14} /></button>
+            <button onClick={() => call.startCall()} disabled={!callEligiblePeer || !isConnected || call.callState !== 'idle'} className="qb-label flex items-center gap-1.5 text-[10px] enabled:hover:qb-accent-text disabled:opacity-30 transition-colors" title={callEligiblePeer ? 'Start a 1-on-1 video call' : 'Video calls are available only in 1-on-1 sessions'}><Video size={14} /> Call</button>
+            <button onClick={() => setShowSearch(s => !s)} className={`qb-label flex items-center gap-1.5 text-[10px] transition-colors ${showSearch ? 'qb-accent-text' : 'hover:qb-accent-text'}`}><Search size={14} /> Search</button>
+            <button onClick={() => setShowRightSidebar(true)} className="qb-label flex items-center gap-2 text-[10px] hover:text-amber-600 dark:hover:text-amber-400 transition-colors">Logs <Activity size={14} /></button>
           </div>
         </div>
 
         {/* Desktop toolbar: call + search + logs toggles */}
-        <div className="hidden lg:flex items-center justify-end gap-4 px-6 py-2 border-b border-black/5 dark:border-white/5 bg-ui-elevated dark:bg-brand-elevated">
+        <div className="qb-surface hidden lg:flex items-center justify-end gap-4 px-6 py-2 border-b">
           <button
             onClick={() => call.startCall()}
             disabled={!callEligiblePeer || !isConnected || call.callState !== 'idle'}
-            className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors text-slate-500 enabled:hover:text-cyan-600 dark:enabled:hover:text-cyan-400 disabled:opacity-30 mr-auto"
+            className="qb-label flex items-center gap-1.5 text-[10px] transition-colors enabled:hover:qb-accent-text disabled:opacity-30 mr-auto"
             title={callEligiblePeer ? 'Start a 1-on-1 video call' : 'Video calls are available only in 1-on-1 sessions'}
           >
             <Video size={13} /> Video Call
           </button>
-          <button onClick={() => setShowSearch(s => !s)} className={`flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors ${showSearch ? 'text-cyan-600 dark:text-cyan-400' : 'text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400'}`} title="Search messages">
+          <button onClick={() => setShowSearch(s => !s)} className={`qb-label flex items-center gap-1.5 text-[10px] transition-colors ${showSearch ? 'qb-accent-text' : 'hover:qb-accent-text'}`} title="Search messages">
             <Search size={13} /> Search
           </button>
-          <button onClick={() => setShowLogs(s => !s)} className={`flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors ${showLogs ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400'}`} title="Toggle event log (IO &amp; latency stay visible)">
+          <button onClick={() => setShowLogs(s => !s)} className={`qb-label flex items-center gap-1.5 text-[10px] transition-colors ${showLogs ? 'text-emerald-600 dark:text-emerald-400' : 'hover:text-emerald-600 dark:hover:text-emerald-400'}`} title="Toggle event log (IO &amp; latency stay visible)">
             <Terminal size={13} /> Logs {showLogs ? 'On' : 'Off'}
           </button>
         </div>
 
         {/* Inline search row (shared mobile + desktop) */}
         {showSearch && (
-          <div className="px-4 lg:px-6 py-2 border-b border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02]">
-            <div className="flex items-center gap-2 bg-white dark:bg-black/40 border border-black/10 dark:border-white/10 focus-within:border-cyan-500/50 transition-colors px-3 py-2 max-w-2xl">
+          <div className="px-4 lg:px-6 py-2 border-b qb-border bg-black/[0.02] dark:bg-white/[0.02]">
+            <div className="qb-input flex items-center gap-2 px-3 py-2 max-w-2xl">
               <Search size={13} className="text-slate-400 shrink-0" />
               <input
                 type="text"
@@ -308,11 +308,11 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="FILTER_BY_KEYWORD"
-                className="flex-1 min-w-0 bg-transparent border-none outline-none text-[12px] font-mono text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-700"
+                className="flex-1 min-w-0 bg-transparent border-none outline-none text-[12px] qb-text placeholder:opacity-60"
                 autoComplete="off"
               />
               {trimmedQuery && (
-                <span className="text-[9px] font-mono text-slate-500 uppercase tracking-tighter italic shrink-0">{visibleMessages.length} match{visibleMessages.length === 1 ? '' : 'es'}</span>
+                <span className="qb-muted text-[9px] italic shrink-0">{visibleMessages.length} match{visibleMessages.length === 1 ? '' : 'es'}</span>
               )}
               {searchQuery
                 ? <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-900 dark:hover:text-white shrink-0" title="Clear search"><X size={13} /></button>
@@ -325,15 +325,15 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         {isHost && <JoinRequests requests={joinRequests} variant="desktop" onAccept={acceptJoin} onReject={rejectJoin} />}
 
         {activePeers.length > 0 && (
-          <div className="px-6 py-2 border-b border-black/5 dark:border-white/5 flex items-center gap-2 text-[10px] font-mono bg-black/[0.02] dark:bg-white/[0.02]">
-            <span className="text-slate-500 uppercase">In Chat:</span>
+          <div className="px-6 py-2 border-b qb-border flex items-center gap-2 text-[10px] bg-black/[0.02] dark:bg-white/[0.02]" style={{ fontFamily: 'var(--qb-font)' }}>
+            <span className="qb-muted uppercase">In Chat:</span>
             {isGroup && <span className="px-2 py-0.5 rounded-sm bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-bold ml-1 uppercase">GROUP</span>}
             {activePeers.length > 1 && (secured
               ? <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold uppercase" title="Noise_XX handshake complete — E2E encrypted."><ShieldCheck size={11} /> E2E_SECURED</span>
               : <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold uppercase animate-pulse" title="Establishing Noise_XX handshakes..."><ShieldAlert size={11} /> HANDSHAKING</span>
             )}
             {activePeers.length > 1 && (transport === 'p2p'
-              ? <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20 font-bold uppercase" title="Direct P2P data channel."><Radio size={11} /> DIRECT_P2P</span>
+              ? <span className="qb-chip flex items-center gap-1 px-2 py-0.5 font-bold uppercase" title="Direct P2P data channel."><Radio size={11} /> DIRECT_P2P</span>
               : <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 font-bold uppercase" title="Via (blind) WS relay."><Server size={11} /> VIA_RELAY</span>
             )}
             {activePeers.length > 1 && directLinkFailed && (
@@ -341,7 +341,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
             )}
             <div className="flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar ml-2">
               {activePeers.map(p => (
-                <span key={p} className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full ${p === peerId ? 'bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'}`}>
+                <span key={p} className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full ${p === peerId ? 'qb-accent-soft-bg qb-accent-text border qb-accent-border' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'}`}>
                   {p === peerId ? `${displayName(p)} (You)` : displayName(p)}
                   {p !== peerId && safetyNumbers[p] && (verifyStatuses[p] === 'verified'
                     ? <span className="text-emerald-600 dark:text-emerald-400 cursor-help" title={`Verified · Safety number:\n${safetyNumbers[p]}`}><ShieldCheck size={11} /></span>
@@ -381,8 +381,8 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           onDrop={handleDrop}
         >
           {isDragging && (
-            <div className="absolute inset-2 z-30 border-2 border-dashed border-cyan-500/60 bg-cyan-500/10 backdrop-blur-sm flex items-center justify-center pointer-events-none">
-              <span className="flex items-center gap-2 text-cyan-600 dark:text-cyan-400 font-mono text-xs uppercase tracking-widest"><Paperclip size={16} /> Drop to encrypt &amp; relay</span>
+            <div className="absolute inset-2 z-30 border-2 border-dashed qb-accent-border qb-accent-soft-bg backdrop-blur-sm flex items-center justify-center pointer-events-none qb-rounded">
+              <span className="qb-label flex items-center gap-2 qb-accent-text text-xs"><Paperclip size={16} /> Drop to encrypt &amp; relay</span>
             </div>
           )}
           <AnimatePresence initial={false}>
@@ -411,30 +411,30 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           {isPending ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-50">
               <Activity size={48} className="mb-4 text-amber-400 animate-pulse" />
-              <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-amber-500">Waiting for host approval...</p>
+              <p className="qb-label text-[10px] tracking-[0.3em] text-amber-500">Waiting for host approval...</p>
             </div>
           ) : trimmedQuery && visibleMessages.length === 0 && messages.length > 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-40">
               <Search size={48} className="mb-4 text-slate-400 dark:text-slate-600" />
-              <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-slate-500">No messages match "{searchQuery.trim()}"</p>
+              <p className="qb-label text-[10px] tracking-[0.3em]">No messages match "{searchQuery.trim()}"</p>
             </div>
           ) : messages.length === 0 && (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-30">
               <Activity size={48} className="mb-4 text-slate-400 dark:text-slate-600" />
-              <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-slate-500">Waiting for encrypted handshakes...</p>
+              <p className="qb-label text-[10px] tracking-[0.3em]">Waiting for encrypted handshakes...</p>
             </div>
           )}
         </div>
 
         <AnimatePresence>
           {typingPeers.length > 0 && (
-            <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} className="px-6 py-1.5 flex items-center gap-2 text-[10px] font-mono text-cyan-600 dark:text-cyan-400 shrink-0">
+            <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} className="qb-label px-6 py-1.5 flex items-center gap-2 text-[10px] qb-accent-text shrink-0">
               <span className="flex gap-0.5">
-                <span className="w-1 h-1 rounded-full bg-cyan-500 animate-bounce [animation-delay:-0.3s]" />
-                <span className="w-1 h-1 rounded-full bg-cyan-500 animate-bounce [animation-delay:-0.15s]" />
-                <span className="w-1 h-1 rounded-full bg-cyan-500 animate-bounce" />
+                <span className="w-1 h-1 rounded-full qb-accent-bg animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-1 h-1 rounded-full qb-accent-bg animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-1 h-1 rounded-full qb-accent-bg animate-bounce" />
               </span>
-              <span className="uppercase tracking-tighter italic truncate">{typingPeers.map(displayName).join(', ')} {typingPeers.length > 1 ? 'are' : 'is'} typing...</span>
+              <span className="italic truncate">{typingPeers.map(displayName).join(', ')} {typingPeers.length > 1 ? 'are' : 'is'} typing...</span>
             </motion.div>
           )}
         </AnimatePresence>

@@ -39,20 +39,20 @@ export function MessageComposer({
 }) {
   const disabled = !isConnected || peerCount <= 1 || isPending || messagingBlocked;
   return (
-    <div className="border-t border-black/5 dark:border-white/5 p-4 shrink-0 bg-ui-elevated dark:bg-brand-elevated">
+    <div className="qb-surface border-t p-4 shrink-0">
       {fileError && (
-        <div className="max-w-5xl mx-auto mb-2 flex items-center justify-between gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px] font-mono uppercase tracking-tighter">
+        <div className="qb-label max-w-5xl mx-auto mb-2 flex items-center justify-between gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px]">
           <span className="truncate">{fileError}</span>
           <button onClick={onClearFileError} className="shrink-0 hover:text-red-800 dark:hover:text-red-200"><X size={12} /></button>
         </div>
       )}
       {isRecording && (
-        <div className="max-w-5xl mx-auto mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px] font-mono uppercase tracking-widest">
+        <div className="qb-label max-w-5xl mx-auto mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px]">
           <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /> Recording — release to encrypt &amp; send
         </div>
       )}
       {peerCount > 1 && directLinkFailed && (
-        <div className="max-w-5xl mx-auto mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px] font-mono uppercase tracking-tighter">
+        <div className="qb-label max-w-5xl mx-auto mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px]">
           <Ban size={12} className="shrink-0" />
           <span>Direct P2P link unavailable — large files &amp; video cannot be sent until a peer-to-peer connection is established.</span>
         </div>
@@ -78,34 +78,34 @@ export function MessageComposer({
             onClick={onToggleAttachMenu}
             disabled={disabled}
             title={`Attach a file — up to ${formatBytes(MAX_FILE_BYTES)} via encrypted relay, or up to ${formatBytes(MAX_P2P_FILE_BYTES)} direct P2P (large files)`}
-            className="h-full px-4 border border-black/10 dark:border-white/10 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition-colors disabled:opacity-20 flex items-center"
+            className="qb-btn h-full px-4 disabled:opacity-20 flex items-center"
           >
             <Paperclip size={16} />
           </button>
           {attachMenuOpen && (
             <>
               <div className="fixed inset-0 z-[80]" onClick={onCloseAttachMenu} />
-              <div className="absolute bottom-full mb-2 left-0 z-[90] w-60 bg-ui-elevated dark:bg-brand-elevated border border-black/10 dark:border-white/10 shadow-2xl">
+              <div className="qb-panel absolute bottom-full mb-2 left-0 z-[90] w-60 overflow-hidden">
                 <button
                   type="button"
                   onClick={() => onOpenFilePicker(true)}
-                  className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-amber-500/10 transition-colors border-b border-black/5 dark:border-white/5"
+                  className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-amber-500/10 transition-colors border-b qb-border"
                 >
                   <LockKeyhole size={15} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <span>
-                    <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-200">Password protected</span>
-                    <span className="block text-[9px] font-mono text-slate-400">E2E encrypted + an extra password lock</span>
+                    <span className="qb-title block text-xs font-bold">Password protected</span>
+                    <span className="qb-muted block text-[9px]">E2E encrypted + an extra password lock</span>
                   </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => onOpenFilePicker(false)}
-                  className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-cyan-500/10 transition-colors border-b border-black/5 dark:border-white/5"
+                  className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:qb-accent-soft-bg transition-colors border-b qb-border"
                 >
-                  <ShieldCheck size={15} className="text-cyan-600 dark:text-cyan-400 shrink-0 mt-0.5" />
+                  <ShieldCheck size={15} className="qb-accent-text shrink-0 mt-0.5" />
                   <span>
-                    <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-200">Send regular</span>
-                    <span className="block text-[9px] font-mono text-slate-400">E2E encrypted end-to-end</span>
+                    <span className="qb-title block text-xs font-bold">Send regular</span>
+                    <span className="qb-muted block text-[9px]">E2E encrypted end-to-end</span>
                   </span>
                 </button>
                 <button
@@ -115,8 +115,8 @@ export function MessageComposer({
                 >
                   <HardDriveUpload size={15} className="text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" />
                   <span>
-                    <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-200">Send large file</span>
-                    <span className="block text-[9px] font-mono text-slate-400">Direct P2P up to {formatBytes(MAX_P2P_FILE_BYTES)} — never touches the server</span>
+                    <span className="qb-title block text-xs font-bold">Send large file</span>
+                    <span className="qb-muted block text-[9px]">Direct P2P up to {formatBytes(MAX_P2P_FILE_BYTES)} — never touches the server</span>
                   </span>
                 </button>
               </div>
@@ -132,24 +132,24 @@ export function MessageComposer({
           onTouchEnd={(e) => { e.preventDefault(); onStopRecording(); }}
           disabled={disabled}
           title="Hold to record a voice message, release to send"
-          className={`px-4 border transition-colors disabled:opacity-20 flex items-center select-none ${isRecording ? 'border-red-500/60 bg-red-500/15 text-red-500 animate-pulse' : 'border-black/10 dark:border-white/10 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'}`}
+          className={`px-4 qb-rounded-sm border transition-colors disabled:opacity-20 flex items-center select-none ${isRecording ? 'border-red-500/60 bg-red-500/15 text-red-500 animate-pulse' : 'qb-border text-slate-500 hover:qb-accent-text hover:qb-accent-border'}`}
         >
           <Mic size={16} />
         </button>
-        <div className="flex-1 bg-white dark:bg-black/40 border border-black/10 dark:border-white/10 focus-within:border-cyan-500/50 transition-colors flex items-center px-4 font-mono text-sm group">
-          <span className="text-cyan-600 dark:text-cyan-500 mr-3 select-none">$</span>
+        <div className="qb-input flex-1 flex items-center px-4 text-sm group">
+          <span className="qb-accent-text mr-3 select-none">$</span>
           <input
             type="text"
             value={input}
             onChange={(e) => { onInputChange(e.target.value); onTyping(); }}
             onPaste={onPaste}
             placeholder={messagingBlocked ? 'Messaging blocked — re-verify contact' : 'Type encrypted payload...'}
-            className="flex-1 bg-transparent border-none outline-none text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-700"
+            className="flex-1 bg-transparent border-none outline-none qb-text placeholder:opacity-60"
             autoComplete="off"
             disabled={peerCount <= 1 || isPending || messagingBlocked}
           />
         </div>
-        <button type="submit" disabled={!isConnected || !input.trim() || peerCount <= 1 || isPending || messagingBlocked} className="bg-slate-900 dark:bg-white text-white dark:text-black px-10 font-mono text-xs font-bold uppercase transition-all enabled:hover:bg-cyan-600 dark:enabled:hover:bg-cyan-400 disabled:opacity-20 flex items-center gap-2">
+        <button type="submit" disabled={!isConnected || !input.trim() || peerCount <= 1 || isPending || messagingBlocked} className="qb-btn-accent px-10 text-xs font-bold flex items-center gap-2">
           Relay<Terminal size={14} />
         </button>
       </form>

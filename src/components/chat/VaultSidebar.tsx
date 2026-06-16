@@ -42,74 +42,74 @@ export function VaultSidebar({
   onRejectJoin: (peerId: string) => void;
 }) {
   return (
-    <aside className={`w-72 lg:w-72 border-r border-black/5 dark:border-white/5 bg-ui-aside dark:bg-brand-aside p-6 flex flex-col gap-8 shrink-0 z-[70] overflow-y-auto ${open ? 'fixed inset-y-0 left-0 shadow-2xl' : 'hidden lg:flex'}`}>
+    <aside className={`qb-aside w-72 lg:w-72 border-r p-6 flex flex-col gap-8 shrink-0 z-[70] overflow-y-auto ${open ? 'fixed inset-y-0 left-0 shadow-2xl' : 'hidden lg:flex'}`}>
       <button onClick={onClose} className="lg:hidden absolute top-4 right-4 text-slate-500 hover:text-slate-900 dark:hover:text-white"><X size={20} /></button>
       <section>
-        <h3 className="mono-label mb-4 uppercase tracking-widest font-bold">Active Session</h3>
+        <h3 className="qb-label mb-4 font-bold">Active Session</h3>
         <div className="space-y-4">
-          <div className="p-3 bg-white dark:bg-white/5 border border-black/5 dark:border-white/10 shadow-sm dark:shadow-none group cursor-pointer" onClick={onCopyId}>
+          <div className="qb-panel-flat p-3 shadow-sm dark:shadow-none group cursor-pointer" onClick={onCopyId}>
             <div className="flex items-center justify-between mb-1">
-              <div className="text-[10px] text-slate-500 font-mono uppercase">{sessionName ? 'Vault_Name' : 'Vault_Hash'}</div>
+              <div className="qb-label text-[10px]">{sessionName ? 'Vault_Name' : 'Vault_Hash'}</div>
               <div className="flex items-center gap-2">
                 {isGroup && <span className="text-[8px] bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-1 rounded-sm uppercase">GROUP</span>}
                 {copied
-                  ? <span className="text-[9px] text-emerald-500 font-mono">✓</span>
-                  : <span className="text-[9px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity font-mono">copy</span>
+                  ? <span className="text-[9px] text-emerald-500">✓</span>
+                  : <span className="qb-muted text-[9px] opacity-0 group-hover:opacity-100 transition-opacity">copy</span>
                 }
               </div>
             </div>
-            <div className="font-mono text-[11px] text-cyan-600 dark:text-cyan-400 break-all leading-tight italic truncate">{sessionName || sessionId}</div>
-            {sessionName && <div className="text-[9px] text-slate-500 font-mono truncate mt-1">ID: {sessionId}</div>}
+            <div className="qb-accent-text text-[11px] break-all leading-tight italic truncate" style={{ fontFamily: 'var(--qb-font)' }}>{sessionName || sessionId}</div>
+            {sessionName && <div className="qb-muted text-[9px] truncate mt-1" style={{ fontFamily: 'var(--qb-font)' }}>ID: {sessionId}</div>}
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <div className="p-2 border border-black/5 dark:border-white/5 bg-white dark:bg-white/5 shadow-sm dark:shadow-none">
-              <div className="text-[9px] text-slate-500 font-mono text-center">PEER</div>
-              <div className="text-xs font-mono text-slate-900 dark:text-white text-center uppercase">{peerId?.replace('peer-', '') || ''}</div>
+            <div className="qb-panel-flat p-2 shadow-sm dark:shadow-none">
+              <div className="qb-muted text-[9px] text-center" style={{ fontFamily: 'var(--qb-font)' }}>PEER</div>
+              <div className="qb-title text-xs text-center uppercase">{peerId?.replace('peer-', '') || ''}</div>
             </div>
-            <div className="p-2 border border-black/5 dark:border-white/5 bg-white dark:bg-white/5 shadow-sm dark:shadow-none">
-              <div className="text-[9px] text-slate-500 font-mono text-center">STATUS</div>
-              <div className={`text-[10px] font-mono text-center font-bold ${isConnected ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-500'}`}>{isConnected ? 'ONLINE' : 'OFFLINE'}</div>
+            <div className="qb-panel-flat p-2 shadow-sm dark:shadow-none">
+              <div className="qb-muted text-[9px] text-center" style={{ fontFamily: 'var(--qb-font)' }}>STATUS</div>
+              <div className={`text-[10px] text-center font-bold ${isConnected ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-500'}`} style={{ fontFamily: 'var(--qb-font)' }}>{isConnected ? 'ONLINE' : 'OFFLINE'}</div>
             </div>
           </div>
           {expiresAt && (
-            <div className="p-3 bg-black/[0.02] dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between">
+            <div className="qb-panel-flat p-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${isExpired ? 'bg-red-500' : 'bg-cyan-500'}`} />
-                <span className="text-[9px] text-slate-500 font-mono uppercase">Decay_Timer</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${isExpired ? 'bg-red-500' : 'qb-accent-bg'}`} />
+                <span className="qb-muted text-[9px]" style={{ fontFamily: 'var(--qb-font)' }}>Decay_Timer</span>
               </div>
-              <span className={`text-[11px] font-mono font-bold ${isExpired ? 'text-red-500' : 'text-cyan-600 dark:text-cyan-400'}`}>{timeLeft}</span>
+              <span className={`text-[11px] font-bold ${isExpired ? 'text-red-500' : 'qb-accent-text'}`} style={{ fontFamily: 'var(--qb-font)' }}>{timeLeft}</span>
             </div>
           )}
         </div>
       </section>
 
       <section>
-        <h3 className="mono-label mb-4 uppercase tracking-widest font-bold flex items-center gap-2"><QrCode size={12} /> Share Vault</h3>
+        <h3 className="qb-label mb-4 font-bold flex items-center gap-2"><QrCode size={12} /> Share Vault</h3>
         <div className="space-y-3">
           {qrDataUrl && (
-            <div className="p-3 bg-white border border-black/5 dark:border-white/10 flex items-center justify-center">
+            <div className="qb-panel-flat p-3 bg-white flex items-center justify-center">
               <img src={qrDataUrl} alt="Vault join QR code" className="w-full max-w-[180px] aspect-square" />
             </div>
           )}
-          <button onClick={onCopyShareLink} className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-cyan-500/30 bg-cyan-500/5 hover:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-[10px] font-mono uppercase tracking-widest transition-colors">
+          <button onClick={onCopyShareLink} className="qb-btn w-full flex items-center justify-center gap-2 px-3 py-2 qb-accent-text text-[10px] tracking-widest" style={{ fontFamily: 'var(--qb-font)', textTransform: 'var(--qb-label-tt)' }}>
             {linkCopied ? <><Share2 size={12} /> Link_Copied</> : <><Share2 size={12} /> Copy_Share_Link</>}
           </button>
-          <p className="text-[9px] font-mono text-slate-500 italic uppercase tracking-tighter leading-relaxed text-center">Scan or share to auto-fill the vault hash</p>
+          <p className="qb-muted text-[9px] italic leading-relaxed text-center" style={{ fontFamily: 'var(--qb-font)' }}>Scan or share to auto-fill the vault hash</p>
         </div>
       </section>
 
       <section>
-        <h3 className="mono-label mb-4 uppercase tracking-widest font-bold">Relay Interface</h3>
+        <h3 className="qb-label mb-4 font-bold">Relay Interface</h3>
         <ul className="space-y-3">
-          <li className="flex items-center justify-between text-[11px]"><span className="font-mono text-slate-500 dark:text-slate-400">ENVELOPE_TYPE</span><span className="text-emerald-600 dark:text-emerald-500">LOCKED</span></li>
-          <li className="flex items-center justify-between text-[11px]"><span className="font-mono text-slate-500 dark:text-slate-400">SESSION_MEMORY</span><span className="text-slate-700 dark:text-slate-200 uppercase">Ephem</span></li>
-          <li className="flex items-center justify-between text-[11px]"><span className="font-mono text-slate-500 dark:text-slate-400">ZERO_KNOWLEDGE</span><span className="text-emerald-600 dark:text-emerald-500 font-bold italic">ACTIVE</span></li>
-          <li className="flex items-center justify-between text-[11px]"><span className="font-mono text-slate-500 dark:text-slate-400">MSG_CRYPTO</span><span className="text-cyan-600 dark:text-cyan-400 font-bold">DoubleRatchet</span></li>
+          <li className="flex items-center justify-between text-[11px]"><span className="qb-muted" style={{ fontFamily: 'var(--qb-font)' }}>ENVELOPE_TYPE</span><span className="text-emerald-600 dark:text-emerald-500">LOCKED</span></li>
+          <li className="flex items-center justify-between text-[11px]"><span className="qb-muted" style={{ fontFamily: 'var(--qb-font)' }}>SESSION_MEMORY</span><span className="qb-title uppercase">Ephem</span></li>
+          <li className="flex items-center justify-between text-[11px]"><span className="qb-muted" style={{ fontFamily: 'var(--qb-font)' }}>ZERO_KNOWLEDGE</span><span className="text-emerald-600 dark:text-emerald-500 font-bold italic">ACTIVE</span></li>
+          <li className="flex items-center justify-between text-[11px]"><span className="qb-muted" style={{ fontFamily: 'var(--qb-font)' }}>MSG_CRYPTO</span><span className="qb-accent-text font-bold">DoubleRatchet</span></li>
         </ul>
       </section>
 
       <section>
-        <h3 className="mono-label mb-4 uppercase tracking-widest font-bold flex items-center gap-2"><Fingerprint size={12} /> Verify Contacts</h3>
+        <h3 className="qb-label mb-4 font-bold flex items-center gap-2"><Fingerprint size={12} /> Verify Contacts</h3>
         <ContactVerificationPanel
           peers={otherPeers}
           displayName={displayName}
@@ -125,8 +125,8 @@ export function VaultSidebar({
       {isHost && <JoinRequests requests={joinRequests} variant="sidebar" onAccept={onAcceptJoin} onReject={onRejectJoin} />}
 
       <div className="mt-auto">
-        <div className="p-4 bg-cyan-500/5 dark:bg-cyan-900/10 border border-cyan-500/20 text-center">
-          <p className="text-[9px] italic text-cyan-700 dark:text-cyan-200/60 leading-relaxed font-mono uppercase tracking-tighter">Server acts as a passive forwarder. Payloads are never persisted or decrypted. Memory-only store active.</p>
+        <div className="qb-rounded p-4 qb-accent-soft-bg border qb-accent-border text-center" style={{ borderColor: 'var(--qb-accent-soft)' }}>
+          <p className="qb-accent-text text-[9px] italic leading-relaxed opacity-80" style={{ fontFamily: 'var(--qb-font)' }}>Server acts as a passive forwarder. Payloads are never persisted or decrypted. Memory-only store active.</p>
         </div>
       </div>
     </aside>

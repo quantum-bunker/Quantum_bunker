@@ -20,7 +20,7 @@ export function JoinRequests({
   if (variant === 'sidebar') {
     return (
       <section>
-        <h3 className="mono-label mb-4 uppercase tracking-widest font-bold text-amber-500">Join Requests</h3>
+        <h3 className="qb-label mb-4 font-bold text-amber-500">Join Requests</h3>
         <div className="space-y-2">
           {requests.map(req => (
             <div key={req.peerId} className="p-3 bg-amber-500/10 border border-amber-500/20">
@@ -41,7 +41,7 @@ export function JoinRequests({
   if (variant === 'mobile') {
     return (
       <div className="lg:hidden p-4 bg-amber-500/10 border-b border-amber-500/20">
-        <h3 className="mono-label mb-2 uppercase tracking-widest font-bold text-amber-500">Join Requests</h3>
+        <h3 className="qb-label mb-2 font-bold text-amber-500">Join Requests</h3>
         <div className="flex flex-col gap-2">
           {requests.map(req => (
             <div key={req.peerId} className="flex flex-col sm:flex-row gap-2 justify-between items-start sm:items-center bg-white dark:bg-black/20 p-2 border border-amber-500/20">
@@ -60,7 +60,7 @@ export function JoinRequests({
   return (
     <div className="hidden lg:block px-6 py-3 bg-amber-500/10 border-b border-amber-500/20">
       <div className="flex items-center gap-3 flex-wrap">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest font-bold text-amber-500 shrink-0">Join Requests ({requests.length}):</h3>
+        <h3 className="qb-label text-[10px] font-bold text-amber-500 shrink-0">Join Requests ({requests.length}):</h3>
         {requests.map(req => (
           <div key={req.peerId} className="flex items-center gap-2 bg-white dark:bg-black/20 px-3 py-1.5 border border-amber-500/20">
             <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 truncate max-w-[180px]"><strong>{req.peerId.substring(0, 8)}...</strong>: "{req.message}"</span>
