@@ -4,7 +4,7 @@ import { Info, Trash2, ShieldCheck, ShieldAlert, ShieldQuestion, Fingerprint, Ra
 import QRCode from 'qrcode';
 import { useRelay } from '../useRelay';
 import { normalizeQuery, messageMatches, splitOnQuery } from '../message-search';
-import { attachmentKind, attachmentDataUrl, formatBytes, MAX_FILE_BYTES, MAX_P2P_FILE_BYTES, FileAttachment } from '../file-transfer';
+import { attachmentKind, attachmentDataUrl, resolveMime, formatBytes, MAX_FILE_BYTES, MAX_P2P_FILE_BYTES, FileAttachment } from '../file-transfer';
 import { decryptFileData, FileCipher } from '../file-crypto';
 import { toBase64 } from '../crypto/noise-primitives';
 import { KeyPair } from '../crypto/noise-xx';
@@ -34,7 +34,7 @@ function highlightMatches(text: string, query: string): React.ReactNode {
 }
 
 function renderAttachment(att: import('../file-transfer').FileAttachment, urlOverride?: string): React.ReactNode {
-  const kind = attachmentKind(att.mime);
+  const kind = attachmentKind(resolveMime(att.mime, att.name));
   const url = urlOverride ?? attachmentDataUrl(att);
   if (kind === 'image') {
     return (

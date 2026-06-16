@@ -78,7 +78,7 @@ export function attachmentKind(mime: string): AttachmentKind {
 }
 
 export function attachmentDataUrl(att: FileAttachment): string {
-  return `data:${att.mime};base64,${att.data}`;
+  return `data:${resolveMime(att.mime, att.name)};base64,${att.data}`;
 }
 
 export function encodeFileAttachment(att: FileAttachment): string {
