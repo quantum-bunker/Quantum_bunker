@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, Plus, LogIn, Trash2, ShieldCheck, Activity, Terminal, Sun, Moon, Menu } from 'lucide-react';
+import { Lock, Plus, LogIn, Trash2, ShieldCheck, Activity, Terminal, Sun, Moon, Menu, ChevronDown, SlidersHorizontal, X } from 'lucide-react';
 import { useRelay } from './useRelay';
 import { useSession } from './useSession';
 import { useMembership } from './useMembership';
@@ -22,13 +22,14 @@ export default function App() {
   const [isCreating, setIsCreating] = useState(false);
   const [joinId, setJoinId] = useState('');
   const [joinMsg, setJoinMsg] = useState('');
-  const [securityOptions, setSecurityOptions] = useState({
-    blur: true,
-    antiCapture: false
-  });
+  const [securityOptions, setSecurityOptions] = useState<{ blur: boolean }>(() => ({
+    blur: localStorage.getItem('qb-blur') !== 'false'
+  }));
   const [isFocused, setIsFocused] = useState(document.hasFocus());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [createSessionName, setCreateSessionName] = useState('');
+  const [advOpen, setAdvOpen] = useState(false);
+  const [linkJoin, setLinkJoin] = useState<string | null>(null);
 
   const {
     sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, savedSessions,
@@ -38,6 +39,10 @@ export default function App() {
   const membership = useMembership();
   const contacts = useContacts();
   const identity = useIdentity();
+
+  useEffect(() => {
+    localStorage.setItem('qb-blur', securityOptions.blur ? 'true' : 'false');
+  }, [securityOptions.blur]);
 
   useEffect(() => {
     localStorage.setItem('qb-theme', theme);
@@ -73,10 +78,21 @@ export default function App() {
 
   useEffect(() => {
     const joinMatch = window.location.pathname.match(/^\/join\/([^/]+)$/);
-    if (joinMatch) { setJoinId(joinMatch[1].trim()); window.history.replaceState({}, '', '/'); return; }
+    if (joinMatch) {
+      const id = joinMatch[1].trim();
+      setJoinId(id);
+      if (!sessionStorage.getItem('qb-sessionId')) setLinkJoin(id);
+      window.history.replaceState({}, '', '/');
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     const vault = params.get('vault');
-    if (vault) { setJoinId(vault.trim()); window.history.replaceState({}, '', window.location.pathname); }
+    if (vault) {
+      const id = vault.trim();
+      setJoinId(id);
+      if (!sessionStorage.getItem('qb-sessionId')) setLinkJoin(id);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
     // A trust handshake link pins the sender's key into the contact book. Trust
     // is purely client-side — nothing about this contact reaches the server.
     const trust = params.get('trust');
@@ -119,10 +135,6 @@ export default function App() {
               <input type="checkbox" checked={securityOptions.blur} onChange={(e) => setSecurityOptions(prev => ({...prev, blur: e.target.checked}))} className="accent-cyan-500 w-3 h-3 cursor-pointer" />
               <span className="text-[10px] font-mono text-slate-500 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors uppercase">Blur</span>
             </label>
-            <label className="flex items-center gap-1.5 cursor-pointer group" title="Enable Anti-Capture Mode (Disrupts cameras)">
-              <input type="checkbox" checked={securityOptions.antiCapture} onChange={(e) => setSecurityOptions(prev => ({...prev, antiCapture: e.target.checked}))} className="accent-amber-500 w-3 h-3 cursor-pointer" />
-              <span className="text-[10px] font-mono text-slate-500 group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors uppercase">Anti-Capture</span>
-            </label>
           </div>
           <button onClick={toggleTheme} className="p-1.5 sm:p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-500 dark:text-slate-400 transition-colors" title="Toggle theme">
             {theme === 'light' ? <Moon size={16} className="sm:w-[18px] sm:h-[18px]" /> : <Sun size={16} className="sm:w-[18px] sm:h-[18px]" />}
@@ -151,10 +163,6 @@ export default function App() {
                 <input type="checkbox" checked={securityOptions.blur} onChange={(e) => setSecurityOptions(prev => ({...prev, blur: e.target.checked}))} className="accent-cyan-500 w-4 h-4 cursor-pointer" />
                 <span className="text-xs font-mono text-slate-600 dark:text-slate-300 uppercase">Message Blurring</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <input type="checkbox" checked={securityOptions.antiCapture} onChange={(e) => setSecurityOptions(prev => ({...prev, antiCapture: e.target.checked}))} className="accent-amber-500 w-4 h-4 cursor-pointer" />
-                <span className="text-xs font-mono text-slate-600 dark:text-slate-300 uppercase">Anti-Capture Mode</span>
-              </label>
             </div>
           </motion.div>
         )}
@@ -167,21 +175,19 @@ export default function App() {
               <div className="absolute inset-0 bg-grid-pattern opacity-[0.03] dark:opacity-[0.05] pointer-events-none" />
               <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-cyan-500/5 to-transparent pointer-events-none" />
               <div className="scanline" />
-              <div className="relative z-10 max-w-[1400px] mx-auto px-6 py-12 lg:py-20 flex flex-col gap-16">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-end">
-                  <div className="lg:col-span-8 space-y-6">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-[10px] font-mono uppercase tracking-[0.2em] animate-pulse">
-                      <ShieldCheck size={14} />Quantum Hardened Security_
+              <div className="relative z-10 max-w-[1400px] mx-auto px-6 py-6 lg:py-8 flex flex-col gap-8">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-[9px] font-mono uppercase tracking-[0.2em]">
+                      <ShieldCheck size={12} />Quantum Hardened Security_
                     </div>
-                    <h1 className="text-6xl sm:text-8xl font-black tracking-tighter leading-[0.9] text-slate-900 dark:text-white">BUNKER <br /><span className="text-cyan-500 italic opacity-80">PROTOCOL.</span></h1>
-                    <p className="text-slate-500 dark:text-slate-500 text-xl leading-relaxed max-w-xl font-mono italic">Stateless message routing. Ephemeral handshakes. <br /><span className="text-slate-400 dark:text-slate-600">No logs. No storage. No traces.</span></p>
+                    <h1 className="text-3xl sm:text-5xl font-black tracking-tighter leading-[0.95] text-slate-900 dark:text-white">BUNKER <span className="text-cyan-500 italic opacity-80">PROTOCOL.</span></h1>
+                    <p className="text-slate-500 dark:text-slate-500 text-sm sm:text-base font-mono italic">Stateless routing · Ephemeral handshakes · No logs, no storage, no traces.</p>
                   </div>
-                  <div className="lg:col-span-4 hidden lg:block pb-2">
-                    <div className="flex flex-col gap-4 border-l-2 border-cyan-500/30 pl-6">
-                      <div className="flex items-center gap-4"><Activity size={16} className="text-cyan-500" /><span className="text-[10px] font-mono text-slate-500 uppercase">Relay_Node: ACTIVE</span></div>
-                      <div className="flex items-center gap-4"><ShieldCheck size={16} className="text-emerald-500" /><span className="text-[10px] font-mono text-slate-500 uppercase">Encryption: Noise_XX</span></div>
-                      <div className="flex items-center gap-4"><Terminal size={16} className="text-amber-500" /><span className="text-[10px] font-mono text-slate-500 uppercase">Uptime: 99.998%</span></div>
-                    </div>
+                  <div className="hidden md:flex flex-wrap items-center gap-x-6 gap-y-2 shrink-0">
+                    <div className="flex items-center gap-2"><Activity size={14} className="text-cyan-500" /><span className="text-[10px] font-mono text-slate-500 uppercase">Relay: ACTIVE</span></div>
+                    <div className="flex items-center gap-2"><ShieldCheck size={14} className="text-emerald-500" /><span className="text-[10px] font-mono text-slate-500 uppercase">Noise_XX</span></div>
+                    <div className="flex items-center gap-2"><Terminal size={14} className="text-amber-500" /><span className="text-[10px] font-mono text-slate-500 uppercase">Uptime 99.998%</span></div>
                   </div>
                 </div>
 
@@ -237,11 +243,28 @@ export default function App() {
                       ))}
                     </div>
 
-                    <IdentityPanel identity={identity} />
-
-                    <MembershipPanel membership={membership} hostSessions={savedSessions.filter(s => s.role === 'host')} />
-
-                    <ContactBook membership={membership} contacts={contacts} hostSessions={savedSessions.filter(s => s.role === 'host')} />
+                    <div className="border border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01]">
+                      <button
+                        onClick={() => setAdvOpen(o => !o)}
+                        className="w-full flex items-center justify-between px-5 py-4 group"
+                      >
+                        <span className="flex items-center gap-3">
+                          <SlidersHorizontal size={16} className="text-cyan-500/70" />
+                          <span className="text-left">
+                            <span className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-200 uppercase tracking-widest">Access Control</span>
+                            <span className="block text-[9px] font-mono text-slate-500 uppercase tracking-tighter mt-0.5">Identity · Whitelist · Trusted Contacts</span>
+                          </span>
+                        </span>
+                        <ChevronDown size={18} className={`text-slate-400 transition-transform ${advOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                      {advOpen && (
+                        <div className="px-5 pb-5 space-y-8 border-t border-black/5 dark:border-white/5 pt-5">
+                          <IdentityPanel identity={identity} />
+                          <MembershipPanel membership={membership} hostSessions={savedSessions.filter(s => s.role === 'host')} />
+                          <ContactBook membership={membership} contacts={contacts} hostSessions={savedSessions.filter(s => s.role === 'host')} />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Vault History */}
@@ -292,6 +315,39 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {linkJoin && view === 'home' && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setLinkJoin(null)}>
+          <div className="w-full max-w-md bg-ui-elevated dark:bg-brand-elevated border border-black/10 dark:border-white/10 shadow-2xl p-6 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <LogIn size={18} className="text-cyan-600 dark:text-cyan-400" />
+              <h3 className="font-mono text-sm font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200">Join Vault</h3>
+              <button onClick={() => setLinkJoin(null)} className="ml-auto text-slate-500 hover:text-slate-900 dark:hover:text-white"><X size={16} /></button>
+            </div>
+            <div className="text-[9px] font-mono text-slate-500 uppercase tracking-tighter">
+              <span className="opacity-60">Vault_Hash:</span> <span className="text-cyan-600/80 dark:text-cyan-400/70 break-all">{linkJoin}</span>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">Your_Name</label>
+              <input
+                type="text"
+                autoFocus
+                value={joinMsg}
+                onChange={(e) => setJoinMsg(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { setLinkJoin(null); handleJoin(linkJoin); } }}
+                placeholder="IDENT_TAG"
+                className="w-full bg-white dark:bg-black/40 border border-black/10 dark:border-white/10 px-4 py-3 text-xs font-mono text-cyan-600 dark:text-cyan-400 placeholder:text-slate-400 dark:placeholder:text-slate-700 outline-none focus:border-cyan-500/50"
+              />
+            </div>
+            <button
+              onClick={() => { setLinkJoin(null); handleJoin(linkJoin); }}
+              className="w-full h-11 bg-cyan-600 hover:bg-cyan-500 dark:bg-cyan-500/20 dark:hover:bg-cyan-500/30 text-white dark:text-cyan-400 border border-cyan-500/50 font-mono font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+            >
+              {savedSessions.some(s => s.id === linkJoin) ? 'RECONNECT' : 'JOIN'}<LogIn size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       <footer className="h-8 border-t border-black/5 dark:border-white/10 bg-ui-elevated dark:bg-brand-elevated px-4 flex items-center justify-between text-[10px] font-mono shrink-0">
         <div className="flex gap-6">

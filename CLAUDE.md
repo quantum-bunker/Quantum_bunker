@@ -152,6 +152,14 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
   public key; member presents token + a fresh possession proof on `join` and is
   auto-admitted with no host approval. The server holds only the host public key in
   the ephemeral session — no membership state is persisted. See `src/shared/membership.ts`.
+- In-chat mutual whitelist: peers exchange membership public keys over opaque `SIGNALING`
+  frames (`kind: 'wl-id' | 'wl-state' | 'whitelist'`) and whitelist each other by a
+  request→accept handshake — BOTH parties must accept, so nobody is trusted unknowingly.
+  A pair is mutually whitelisted iff each has pinned the other (`contacts-store.ts`). A
+  newcomer is shown in a peer's "whitelist group" only when mutually whitelisted with that
+  peer AND with every other member of that peer's mutual set (client-side clique rule —
+  "anyone cannot be added"). No new `EnvelopeType`; the relay stays blind. Whitelisting
+  applies to people (keys), never to a group as a unit. See `useRelay.ts` + `ChatRoom.tsx`.
 
 ### Session Persistence (Client)
 - Active session: `sessionStorage` (survives page refresh, not tab close)
@@ -160,11 +168,12 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 - Join message: `localStorage`
 
 ### Security / Privacy UI
-- Window blur blackout: chat obscured when app loses focus
-- Message blur-to-reveal: hover/touch to read (optional)
-- Anti-capture strobe (optional, CSS animation)
+- Window blur blackout: chat obscured when app loses focus (always on in chat)
+- Message blur-to-reveal: hover/touch to read (optional; persisted via `qb-blur`)
 - Session decay countdown timer
 - Copy vault hash button
+- (The anti-capture strobe was removed — a CSS effect that did not actually block
+  screenshots/recording. See `usage/anti-capture.md`.)
 
 ### Logging & Observability
 - Winston structured logger (backend)
