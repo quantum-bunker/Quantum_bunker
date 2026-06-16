@@ -41,6 +41,11 @@ export class CallConnection {
   private makingOffer = false;
   private ignoreOffer = false;
   private state: CallConnectionState = 'connecting';
+  // Fallback: some browsers never transition connectionState to 'failed' when
+  // ICE gives up. We fire our own timeout so the UI doesn't freeze on
+  // 'connecting' indefinitely. 20 s is long enough for trickle-ICE to finish
+  // across most network conditions while still feeling responsive to the user.
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: CallConnectionOptions) {
     this.opts = opts;
@@ -48,6 +53,10 @@ export class CallConnection {
     // yields on collision. Either assignment works as long as they differ.
     this.polite = !isOfferer(opts.selfId, opts.peerId);
     this.pc = new RTCPeerConnection(getP2PIceConfig());
+
+    this.connectTimer = setTimeout(() => {
+      if (this.state === 'connecting') this.setState('failed');
+    }, 20_000);
 
     this.pc.onicecandidate = ({ candidate }) => {
       if (candidate) this.opts.sendSignal({ call: 'ice', candidate: candidate.toJSON() });
@@ -76,6 +85,14 @@ export class CallConnection {
       if (s === 'connected') this.setState('connected');
       else if (s === 'failed') this.setState('failed');
       else if (s === 'closed') this.setState('closed');
+    };
+
+    // iceconnectionstatechange fires faster than connectionstatechange in some
+    // browsers and is the only signal we get when connectionState stays stuck.
+    this.pc.oniceconnectionstatechange = () => {
+      const s = this.pc.iceConnectionState;
+      if (s === 'connected' || s === 'completed') this.setState('connected');
+      else if (s === 'failed') this.setState('failed');
     };
   }
 
@@ -132,6 +149,10 @@ export class CallConnection {
   private setState(next: CallConnectionState): void {
     if (this.state === next || this.state === 'closed') return;
     this.state = next;
+    if (next !== 'connecting' && this.connectTimer !== null) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
     this.opts.onState(next);
   }
 

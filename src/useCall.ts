@@ -89,7 +89,7 @@ export function useCall(opts: UseCallOptions): UseCall {
       onRemoteStream: (s) => setRemoteStream(s),
       onState: (s: CallConnectionState) => {
         if (s === 'connected') setState('active');
-        else if (s === 'failed') teardown('Connection failed — could not establish a direct media link');
+        else if (s === 'failed') teardown('Could not establish a direct media path. If you and the other person are on different networks (mobile data, different ISPs), a TURN relay server is required — see VITE_TURN_URL in the deployment docs.');
         else if (s === 'closed' && stateRef.current !== 'idle') teardown();
       },
     });

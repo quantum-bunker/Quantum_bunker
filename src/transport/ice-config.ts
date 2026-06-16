@@ -30,19 +30,39 @@ export function getIceConfig(): RTCConfiguration {
   return { iceServers: parseIceServers(meta.env?.VITE_ICE_SERVERS) };
 }
 
-// Free, public STUN — no TURN. STUN only reflects a peer's public address so
-// the two browsers can attempt a direct hole-punched connection; it relays no
-// media and costs nothing. A TURN relay would route the bytes (defeating the
-// zero-server-bandwidth goal) so it is intentionally absent: if a direct path
-// cannot be punched, the media send fails visibly rather than relaying.
-const DEFAULT_STUN_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+// Multiple public STUN servers. STUN reflects public addresses so browsers can
+// attempt direct hole-punching. Multiple entries increase resilience when one
+// provider is slow or blocked, but STUN alone cannot traverse symmetric NATs —
+// peers on different carrier/VPN networks require a TURN relay (see below).
+const DEFAULT_STUN_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+];
 
-// ICE config for the direct media path. Defaults to public STUN so peers behind
-// different NATs can connect; operators may override (or add TURN at their own
-// cost) via VITE_ICE_SERVERS. This deliberately differs from getIceConfig(),
-// whose empty default keeps the relay-only text path from leaking any IP.
+// Build TURN entry from convenience env vars, as an alternative to the full
+// VITE_ICE_SERVERS JSON. Set VITE_TURN_URL (e.g. "turn:myserver.com:3478"),
+// VITE_TURN_USERNAME, and VITE_TURN_CREDENTIAL.
+function getTurnFromEnv(env: Record<string, string | undefined>): RTCIceServer[] {
+  const url = env.VITE_TURN_URL;
+  if (!url) return [];
+  const entry: RTCIceServer = { urls: url };
+  if (env.VITE_TURN_USERNAME) entry.username = env.VITE_TURN_USERNAME;
+  if (env.VITE_TURN_CREDENTIAL) entry.credential = env.VITE_TURN_CREDENTIAL;
+  return [entry];
+}
+
+// ICE config for the direct media path. Defaults to multiple public STUN servers
+// so peers on the same or compatible NAT types can connect. Operators add TURN
+// via VITE_ICE_SERVERS (full JSON) or VITE_TURN_URL / VITE_TURN_USERNAME /
+// VITE_TURN_CREDENTIAL (convenience vars) for cross-network calls behind
+// symmetric NATs. TURN relays media bytes — an explicit operator opt-in.
 export function getP2PIceConfig(): RTCConfiguration {
   const meta = import.meta as unknown as { env?: Record<string, string | undefined> };
-  const override = parseIceServers(meta.env?.VITE_ICE_SERVERS);
-  return { iceServers: override.length ? override : DEFAULT_STUN_SERVERS };
+  const env = meta.env ?? {};
+  const override = parseIceServers(env.VITE_ICE_SERVERS);
+  if (override.length) return { iceServers: override };
+  const turn = getTurnFromEnv(env);
+  return { iceServers: [...DEFAULT_STUN_SERVERS, ...turn] };
 }
