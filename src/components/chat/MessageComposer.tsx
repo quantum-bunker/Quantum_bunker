@@ -1,10 +1,11 @@
 import React, { RefObject } from 'react';
-import { Ban, HardDriveUpload, Lock, LockKeyhole, Mic, Paperclip, ShieldCheck, Terminal, X } from 'lucide-react';
+import { Ban, HardDriveUpload, LockKeyhole, Mic, Paperclip, Send, ShieldCheck, Terminal, X } from 'lucide-react';
 import { formatBytes, MAX_FILE_BYTES, MAX_P2P_FILE_BYTES } from '../../file-transfer';
 
 // Message input bar: file/voice/large-file attach controls plus the text relay
 // form. Holds no transfer logic — all actions are delegated to the parent.
 export function MessageComposer({
+  classic = false,
   input, onInputChange, onSubmit, onTyping, onPaste,
   isConnected, peerCount, isPending, messagingBlocked, directLinkFailed,
   attachMenuOpen, onToggleAttachMenu, onCloseAttachMenu,
@@ -12,6 +13,7 @@ export function MessageComposer({
   isRecording, onStartRecording, onStopRecording,
   fileError, onClearFileError,
 }: {
+  classic?: boolean;
   input: string;
   onInputChange: (value: string) => void;
   onSubmit: (e: React.FormEvent) => void;
@@ -137,20 +139,20 @@ export function MessageComposer({
           <Mic size={16} />
         </button>
         <div className="qb-input flex-1 flex items-center px-4 text-sm group">
-          <span className="qb-accent-text mr-3 select-none">$</span>
+          {!classic && <span className="qb-accent-text mr-3 select-none">$</span>}
           <input
             type="text"
             value={input}
             onChange={(e) => { onInputChange(e.target.value); onTyping(); }}
             onPaste={onPaste}
-            placeholder={messagingBlocked ? 'Messaging blocked — re-verify contact' : 'Type encrypted payload...'}
+            placeholder={messagingBlocked ? 'Messaging blocked — re-verify contact' : classic ? 'Write a message…' : 'Type encrypted payload...'}
             className="flex-1 bg-transparent border-none outline-none qb-text placeholder:opacity-60"
             autoComplete="off"
             disabled={peerCount <= 1 || isPending || messagingBlocked}
           />
         </div>
-        <button type="submit" disabled={!isConnected || !input.trim() || peerCount <= 1 || isPending || messagingBlocked} className="qb-btn-accent px-10 text-xs font-bold flex items-center gap-2">
-          Relay<Terminal size={14} />
+        <button type="submit" disabled={!isConnected || !input.trim() || peerCount <= 1 || isPending || messagingBlocked} className={`qb-btn-accent text-xs font-bold flex items-center gap-2 ${classic ? 'px-8' : 'px-10'}`}>
+          {classic ? <>Send<Send size={14} /></> : <>Relay<Terminal size={14} /></>}
         </button>
       </form>
     </div>

@@ -18,6 +18,7 @@ import { EventLogSidebar, LogEntry } from './chat/EventLogSidebar';
 import { MessageBubble } from './chat/MessageBubble';
 import { MessageComposer } from './chat/MessageComposer';
 import { PasswordModal, PasswordModalState } from './chat/PasswordModal';
+import { useTheme } from '../useTheme';
 
 interface ChatRoomProps {
   sessionId: string;
@@ -35,6 +36,9 @@ interface ChatRoomProps {
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset, identity }: ChatRoomProps) {
   const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
   const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
+  const { family } = useTheme();
+  const classic = family === 'classic';
+  const showDiagnostics = !classic;
   const otherPeers = activePeers.filter(p => p !== peerId);
   const messagingBlocked = changedPeers.length > 0;
   // Whitelist trust derivations: a peer is mutual iff we have pinned them and
@@ -239,6 +243,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
       )}
 
       <VaultSidebar
+        classic={classic}
         open={showLeftSidebar}
         onClose={() => setShowLeftSidebar(false)}
         sessionId={sessionId}
@@ -275,7 +280,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           <div className="flex items-center gap-3">
             <button onClick={() => call.startCall()} disabled={!callEligiblePeer || !isConnected || call.callState !== 'idle'} className="qb-label flex items-center gap-1.5 text-[10px] enabled:hover:qb-accent-text disabled:opacity-30 transition-colors" title={callEligiblePeer ? 'Start a 1-on-1 video call' : 'Video calls are available only in 1-on-1 sessions'}><Video size={14} /> Call</button>
             <button onClick={() => setShowSearch(s => !s)} className={`qb-label flex items-center gap-1.5 text-[10px] transition-colors ${showSearch ? 'qb-accent-text' : 'hover:qb-accent-text'}`}><Search size={14} /> Search</button>
-            <button onClick={() => setShowRightSidebar(true)} className="qb-label flex items-center gap-2 text-[10px] hover:text-amber-600 dark:hover:text-amber-400 transition-colors">Logs <Activity size={14} /></button>
+            {showDiagnostics && <button onClick={() => setShowRightSidebar(true)} className="qb-label flex items-center gap-2 text-[10px] hover:text-amber-600 dark:hover:text-amber-400 transition-colors">Logs <Activity size={14} /></button>}
           </div>
         </div>
 
@@ -292,9 +297,11 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           <button onClick={() => setShowSearch(s => !s)} className={`qb-label flex items-center gap-1.5 text-[10px] transition-colors ${showSearch ? 'qb-accent-text' : 'hover:qb-accent-text'}`} title="Search messages">
             <Search size={13} /> Search
           </button>
-          <button onClick={() => setShowLogs(s => !s)} className={`qb-label flex items-center gap-1.5 text-[10px] transition-colors ${showLogs ? 'text-emerald-600 dark:text-emerald-400' : 'hover:text-emerald-600 dark:hover:text-emerald-400'}`} title="Toggle event log (IO &amp; latency stay visible)">
-            <Terminal size={13} /> Logs {showLogs ? 'On' : 'Off'}
-          </button>
+          {showDiagnostics && (
+            <button onClick={() => setShowLogs(s => !s)} className={`qb-label flex items-center gap-1.5 text-[10px] transition-colors ${showLogs ? 'text-emerald-600 dark:text-emerald-400' : 'hover:text-emerald-600 dark:hover:text-emerald-400'}`} title="Toggle event log (IO &amp; latency stay visible)">
+              <Terminal size={13} /> Logs {showLogs ? 'On' : 'Off'}
+            </button>
+          )}
         </div>
 
         {/* Inline search row (shared mobile + desktop) */}
@@ -307,7 +314,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                 autoFocus
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="FILTER_BY_KEYWORD"
+                placeholder={classic ? 'Search messages' : 'FILTER_BY_KEYWORD'}
                 className="flex-1 min-w-0 bg-transparent border-none outline-none text-[12px] qb-text placeholder:opacity-60"
                 autoComplete="off"
               />
@@ -325,19 +332,19 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         {isHost && <JoinRequests requests={joinRequests} variant="desktop" onAccept={acceptJoin} onReject={rejectJoin} />}
 
         {activePeers.length > 0 && (
-          <div className="px-6 py-2 border-b qb-border flex items-center gap-2 text-[10px] bg-black/[0.02] dark:bg-white/[0.02]" style={{ fontFamily: 'var(--qb-font)' }}>
-            <span className="qb-muted uppercase">In Chat:</span>
-            {isGroup && <span className="px-2 py-0.5 rounded-sm bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-bold ml-1 uppercase">GROUP</span>}
+          <div className={`px-6 py-2 border-b qb-border flex items-center gap-2 text-[10px] bg-black/[0.02] dark:bg-white/[0.02] ${classic ? '' : 'uppercase'}`} style={{ fontFamily: 'var(--qb-font)' }}>
+            <span className="qb-muted">{classic ? 'In this room' : 'In Chat:'}</span>
+            {isGroup && <span className={`px-2 py-0.5 rounded-sm bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-bold ml-1 ${classic ? '' : 'uppercase'}`}>{classic ? 'Group' : 'GROUP'}</span>}
             {activePeers.length > 1 && (secured
-              ? <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold uppercase" title="Noise_XX handshake complete — E2E encrypted."><ShieldCheck size={11} /> E2E_SECURED</span>
-              : <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold uppercase animate-pulse" title="Establishing Noise_XX handshakes..."><ShieldAlert size={11} /> HANDSHAKING</span>
+              ? <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold ${classic ? '' : 'uppercase'}`} title="Handshake complete — end-to-end encrypted."><ShieldCheck size={11} /> {classic ? 'Encrypted' : 'E2E_SECURED'}</span>
+              : <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold animate-pulse ${classic ? '' : 'uppercase'}`} title="Setting up encryption…"><ShieldAlert size={11} /> {classic ? 'Connecting…' : 'HANDSHAKING'}</span>
             )}
             {activePeers.length > 1 && (transport === 'p2p'
-              ? <span className="qb-chip flex items-center gap-1 px-2 py-0.5 font-bold uppercase" title="Direct P2P data channel."><Radio size={11} /> DIRECT_P2P</span>
-              : <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 font-bold uppercase" title="Via (blind) WS relay."><Server size={11} /> VIA_RELAY</span>
+              ? <span className={`qb-chip flex items-center gap-1 px-2 py-0.5 font-bold ${classic ? '' : 'uppercase'}`} title="Direct peer-to-peer connection."><Radio size={11} /> {classic ? 'Direct' : 'DIRECT_P2P'}</span>
+              : <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 font-bold ${classic ? '' : 'uppercase'}`} title="Routed through the blind relay."><Server size={11} /> {classic ? 'Relayed' : 'VIA_RELAY'}</span>
             )}
             {activePeers.length > 1 && directLinkFailed && (
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-bold uppercase animate-pulse" title="A direct peer-to-peer link could not be established (no STUN/NAT path). Large files & video cannot be sent — they are never relayed through the server."><Ban size={11} /> DIRECT_LINK_FAILED</span>
+              <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-bold animate-pulse ${classic ? '' : 'uppercase'}`} title="A direct peer-to-peer link could not be established (no STUN/NAT path). Large files & video cannot be sent — they are never relayed through the server.">{classic ? <><Ban size={11} /> No direct link</> : <><Ban size={11} /> DIRECT_LINK_FAILED</>}</span>
             )}
             <div className="flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar ml-2">
               {activePeers.map(p => (
@@ -382,7 +389,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         >
           {isDragging && (
             <div className="absolute inset-2 z-30 border-2 border-dashed qb-accent-border qb-accent-soft-bg backdrop-blur-sm flex items-center justify-center pointer-events-none qb-rounded">
-              <span className="qb-label flex items-center gap-2 qb-accent-text text-xs"><Paperclip size={16} /> Drop to encrypt &amp; relay</span>
+              <span className="qb-label flex items-center gap-2 qb-accent-text text-xs"><Paperclip size={16} /> {classic ? 'Drop to send securely' : 'Drop to encrypt & relay'}</span>
             </div>
           )}
           <AnimatePresence initial={false}>
@@ -411,17 +418,17 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           {isPending ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-50">
               <Activity size={48} className="mb-4 text-amber-400 animate-pulse" />
-              <p className="qb-label text-[10px] tracking-[0.3em] text-amber-500">Waiting for host approval...</p>
+              <p className={`qb-label text-amber-500 ${classic ? 'text-sm italic' : 'text-[10px] tracking-[0.3em]'}`}>Waiting for the host to let you in…</p>
             </div>
           ) : trimmedQuery && visibleMessages.length === 0 && messages.length > 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-40">
               <Search size={48} className="mb-4 text-slate-400 dark:text-slate-600" />
-              <p className="qb-label text-[10px] tracking-[0.3em]">No messages match "{searchQuery.trim()}"</p>
+              <p className={`qb-label ${classic ? 'text-sm italic' : 'text-[10px] tracking-[0.3em]'}`}>No messages match "{searchQuery.trim()}"</p>
             </div>
           ) : messages.length === 0 && (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-30">
               <Activity size={48} className="mb-4 text-slate-400 dark:text-slate-600" />
-              <p className="qb-label text-[10px] tracking-[0.3em]">Waiting for encrypted handshakes...</p>
+              <p className={`qb-label ${classic ? 'text-sm italic' : 'text-[10px] tracking-[0.3em]'}`}>{classic ? 'No messages yet — say hello.' : 'Waiting for encrypted handshakes...'}</p>
             </div>
           )}
         </div>
@@ -440,6 +447,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         </AnimatePresence>
 
         <MessageComposer
+          classic={classic}
           input={input}
           onInputChange={setInput}
           onSubmit={handleSend}
@@ -494,7 +502,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         unverify={unverify}
       />
 
-      <EventLogSidebar
+      {showDiagnostics && <EventLogSidebar
         logs={logs}
         ioLoad={ioLoad}
         latencyMs={latencyMs}
@@ -502,7 +510,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         showRightSidebar={showRightSidebar}
         onToggleLogs={() => setShowLogs(s => !s)}
         onCloseMobile={() => setShowRightSidebar(false)}
-      />
+      />}
     </>
   );
 }

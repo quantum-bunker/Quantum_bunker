@@ -8,6 +8,7 @@ import { useIdentity } from './useIdentity';
 import { useTheme, THEME_FAMILIES } from './useTheme';
 import ChatRoom from './components/ChatRoom';
 import { HomeView } from './components/HomeView';
+import { ClassicHome } from './components/ClassicHome';
 import { JoinLinkModal } from './components/JoinLinkModal';
 
 export default function App() {
@@ -110,7 +111,8 @@ export default function App() {
             <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 qb-accent-bg qb-rounded-sm" />
           </div>
           <span className="qb-title font-bold tracking-widest sm:text-base text-[10px]">
-            QUANTUM_BUNKER <span className="qb-accent-text text-[10px] font-normal ml-2 opacity-70 hidden md:inline">v1.0.4-RELAY</span>
+            {family === 'classic' ? 'Quantum Bunker' : 'QUANTUM_BUNKER'}
+            {family !== 'classic' && <span className="qb-accent-text text-[10px] font-normal ml-2 opacity-70 hidden md:inline">v1.0.4-RELAY</span>}
           </span>
         </div>
         <div className="flex items-center gap-3 sm:gap-6">
@@ -152,7 +154,7 @@ export default function App() {
           </button>
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="qb-label text-[10px] hidden lg:block">Relay Node: AIS-DEFAULT</span>
+            <span className="qb-label text-[10px] hidden lg:block">{family === 'classic' ? 'Connected' : 'Relay Node: AIS-DEFAULT'}</span>
           </div>
           {view === 'chat' && (
             <button onClick={handleDestroy} className="qb-btn px-2 sm:px-4 py-1.5 text-[10px] hover:!text-red-500 hover:!border-red-500/40 hover:!bg-red-500/10 flex items-center gap-2 qb-label">
@@ -200,24 +202,45 @@ export default function App() {
               <div className={`absolute inset-0 bg-grid-pattern opacity-[0.03] dark:opacity-[0.05] pointer-events-none ${family === 'geeky' ? '' : 'hidden'}`} />
               <div className="absolute top-0 left-0 w-full h-[500px] pointer-events-none" style={{ background: 'linear-gradient(to bottom, var(--qb-accent-soft), transparent)' }} />
               <div className="scanline" />
-              <HomeView
-                createSessionName={createSessionName}
-                onCreateSessionNameChange={setCreateSessionName}
-                onCreate={handleCreate}
-                isCreating={isCreating}
-                joinId={joinId}
-                onJoinIdChange={setJoinId}
-                joinMsg={joinMsg}
-                onJoinMsgChange={setJoinMsg}
-                onJoin={handleJoin}
-                savedSessions={savedSessions}
-                onDestroySession={destroySession}
-                advOpen={advOpen}
-                onToggleAdv={() => setAdvOpen(o => !o)}
-                identity={identity}
-                membership={membership}
-                contacts={contacts}
-              />
+              {family === 'classic' ? (
+                <ClassicHome
+                  createSessionName={createSessionName}
+                  onCreateSessionNameChange={setCreateSessionName}
+                  onCreate={handleCreate}
+                  isCreating={isCreating}
+                  joinId={joinId}
+                  onJoinIdChange={setJoinId}
+                  joinMsg={joinMsg}
+                  onJoinMsgChange={setJoinMsg}
+                  onJoin={handleJoin}
+                  savedSessions={savedSessions}
+                  onDestroySession={destroySession}
+                  advOpen={advOpen}
+                  onToggleAdv={() => setAdvOpen(o => !o)}
+                  identity={identity}
+                  membership={membership}
+                  contacts={contacts}
+                />
+              ) : (
+                <HomeView
+                  createSessionName={createSessionName}
+                  onCreateSessionNameChange={setCreateSessionName}
+                  onCreate={handleCreate}
+                  isCreating={isCreating}
+                  joinId={joinId}
+                  onJoinIdChange={setJoinId}
+                  joinMsg={joinMsg}
+                  onJoinMsgChange={setJoinMsg}
+                  onJoin={handleJoin}
+                  savedSessions={savedSessions}
+                  onDestroySession={destroySession}
+                  advOpen={advOpen}
+                  onToggleAdv={() => setAdvOpen(o => !o)}
+                  identity={identity}
+                  membership={membership}
+                  contacts={contacts}
+                />
+              )}
             </motion.div>
           ) : (
             <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex overflow-hidden">
@@ -239,14 +262,23 @@ export default function App() {
       )}
 
       <footer className="qb-surface qb-label h-8 border-t px-4 flex items-center justify-between text-[10px] shrink-0">
-        <div className="flex gap-6">
-          <span className="hidden sm:inline">ENCRYPTION: <span className="qb-title">Noise_XX + DoubleRatchet</span></span>
-          <span>TRANSPORT: <span className="qb-title">WSS/1.1</span></span>
-        </div>
-        <div className="flex gap-4">
-          <span className="hidden md:inline">Contract: v1.0.4</span>
-          <span className="text-emerald-500 dark:text-emerald-500 flex items-center gap-1.5 font-bold"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Node_Stable</span>
-        </div>
+        {family === 'classic' ? (
+          <>
+            <span className="italic">End-to-end encrypted · nothing is stored</span>
+            <span className="text-emerald-500 dark:text-emerald-500 flex items-center gap-1.5 font-bold"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Secure</span>
+          </>
+        ) : (
+          <>
+            <div className="flex gap-6">
+              <span className="hidden sm:inline">ENCRYPTION: <span className="qb-title">Noise_XX + DoubleRatchet</span></span>
+              <span>TRANSPORT: <span className="qb-title">WSS/1.1</span></span>
+            </div>
+            <div className="flex gap-4">
+              <span className="hidden md:inline">Contract: v1.0.4</span>
+              <span className="text-emerald-500 dark:text-emerald-500 flex items-center gap-1.5 font-bold"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Node_Stable</span>
+            </div>
+          </>
+        )}
       </footer>
     </div>
   );
