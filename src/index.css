@@ -5,7 +5,7 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  
+
   --color-brand-bg: #09090b;
   --color-brand-elevated: #0c0c0e;
   --color-brand-aside: #0b0b0d;
@@ -18,13 +18,126 @@
   --color-ui-muted: #64748b;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Theme token layer
+   Two independent axes:
+     · family  → data-theme="geeky" | "halo"   (look & feel: font, radius, casing, accent)
+     · mode    → .dark on <html>                (light/dark surfaces)
+   Components read only the --qb-* tokens / .qb-* classes below, never raw
+   colors, so a family swap restyles the whole app from one place. Geeky's
+   token values reproduce the original hardcoded look exactly.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --qb-radius: 0px;
+  --qb-radius-sm: 0px;
+  --qb-font: var(--font-mono);
+  --qb-label-tt: uppercase;
+  --qb-label-spacing: 0.12em;
+}
+
+/* ── Geeky (default) ─────────────────────────────────────────────────────── */
+[data-theme="geeky"] {
+  --qb-radius: 0px;
+  --qb-radius-sm: 0px;
+  --qb-font: var(--font-mono);
+  --qb-label-tt: uppercase;
+  --qb-label-spacing: 0.12em;
+  --qb-accent: #0891b2;
+  --qb-accent-strong: #0e7490;
+  --qb-accent-bright: #22d3ee;
+}
+[data-theme="geeky"]:not(.dark) {
+  --qb-bg: #ffffff;
+  --qb-surface: #f8fafc;
+  --qb-aside: #f1f5f9;
+  --qb-panel: #f8fafc;
+  --qb-panel-2: #ffffff;
+  --qb-border: rgba(0,0,0,0.06);
+  --qb-text: #334155;
+  --qb-heading: #0f172a;
+  --qb-muted: #64748b;
+  --qb-accent: #0891b2;
+  --qb-accent-soft: rgba(8,145,178,0.10);
+  --qb-accent-contrast: #ffffff;
+  --qb-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  --qb-input-bg: rgba(0,0,0,0.02);
+}
+[data-theme="geeky"].dark {
+  --qb-bg: #09090b;
+  --qb-surface: #0c0c0e;
+  --qb-aside: #0b0b0d;
+  --qb-panel: #0c0c0e;
+  --qb-panel-2: rgba(255,255,255,0.02);
+  --qb-border: rgba(255,255,255,0.06);
+  --qb-text: #cbd5e1;
+  --qb-heading: #ffffff;
+  --qb-muted: #64748b;
+  --qb-accent: #22d3ee;
+  --qb-accent-strong: #06b6d4;
+  --qb-accent-bright: #67e8f9;
+  --qb-accent-soft: rgba(34,211,238,0.10);
+  --qb-accent-contrast: #06121a;
+  --qb-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  --qb-input-bg: rgba(0,0,0,0.4);
+}
+
+/* ── Halo (Soft Modern, sky-blue) ────────────────────────────────────────── */
+[data-theme="halo"] {
+  --qb-radius: 16px;
+  --qb-radius-sm: 10px;
+  --qb-font: var(--font-sans);
+  --qb-label-tt: none;
+  --qb-label-spacing: 0.01em;
+  --qb-accent: #0ea5e9;
+  --qb-accent-strong: #0284c7;
+  --qb-accent-bright: #38bdf8;
+}
+[data-theme="halo"]:not(.dark) {
+  --qb-bg: #eef4fb;
+  --qb-surface: #ffffff;
+  --qb-aside: #f3f7fc;
+  --qb-panel: #ffffff;
+  --qb-panel-2: #f7fafe;
+  --qb-border: rgba(2,32,71,0.08);
+  --qb-text: #3a4a60;
+  --qb-heading: #11243f;
+  --qb-muted: #6b7c93;
+  --qb-accent: #0284c7;
+  --qb-accent-soft: rgba(14,165,233,0.12);
+  --qb-accent-contrast: #ffffff;
+  --qb-shadow: 0 6px 24px rgba(2,32,71,0.08);
+  --qb-input-bg: #f1f6fc;
+}
+[data-theme="halo"].dark {
+  --qb-bg: #0a1424;
+  --qb-surface: #0f1d33;
+  --qb-aside: #0d1929;
+  --qb-panel: #14233c;
+  --qb-panel-2: #18294a;
+  --qb-border: rgba(255,255,255,0.08);
+  --qb-text: #c4d2e6;
+  --qb-heading: #f1f6fc;
+  --qb-muted: #8094ad;
+  --qb-accent: #38bdf8;
+  --qb-accent-strong: #0ea5e9;
+  --qb-accent-bright: #7dd3fc;
+  --qb-accent-soft: rgba(56,189,248,0.14);
+  --qb-accent-contrast: #06121f;
+  --qb-shadow: 0 12px 34px rgba(0,0,0,0.45);
+  --qb-input-bg: rgba(255,255,255,0.05);
+}
+
 @layer base {
   html, body {
     @apply transition-colors duration-300;
   }
-  
+
   body {
-    @apply bg-ui-bg text-ui-text dark:bg-brand-bg dark:text-slate-300 font-sans antialiased;
+    background: var(--qb-bg);
+    color: var(--qb-text);
+    font-family: var(--qb-font);
+    @apply antialiased;
   }
 
   .bg-grid-pattern {
@@ -47,6 +160,113 @@
   }
 }
 
+/* ── Semantic component classes (token-driven) ───────────────────────────── */
+@layer components {
+  .qb-app {
+    background: var(--qb-bg);
+    color: var(--qb-text);
+    font-family: var(--qb-font);
+  }
+
+  .qb-surface {
+    background: var(--qb-surface);
+    border-color: var(--qb-border);
+  }
+
+  .qb-aside {
+    background: var(--qb-aside);
+    border-color: var(--qb-border);
+  }
+
+  .qb-panel {
+    background: var(--qb-panel);
+    border: 1px solid var(--qb-border);
+    border-radius: var(--qb-radius);
+    box-shadow: var(--qb-shadow);
+  }
+
+  .qb-panel-flat {
+    background: var(--qb-panel-2);
+    border: 1px solid var(--qb-border);
+    border-radius: var(--qb-radius);
+  }
+
+  .qb-border { border-color: var(--qb-border); }
+  .qb-rounded { border-radius: var(--qb-radius); }
+  .qb-rounded-sm { border-radius: var(--qb-radius-sm); }
+
+  .qb-label {
+    font-family: var(--qb-font);
+    text-transform: var(--qb-label-tt);
+    letter-spacing: var(--qb-label-spacing);
+    color: var(--qb-muted);
+  }
+
+  .qb-title {
+    color: var(--qb-heading);
+    font-family: var(--qb-font);
+    text-transform: var(--qb-label-tt);
+    letter-spacing: var(--qb-label-spacing);
+  }
+
+  .qb-text { color: var(--qb-text); }
+  .qb-muted { color: var(--qb-muted); }
+  .qb-accent-border { border-color: var(--qb-accent); }
+
+  .qb-input {
+    background: var(--qb-input-bg);
+    border: 1px solid var(--qb-border);
+    border-radius: var(--qb-radius-sm);
+    color: var(--qb-text);
+    font-family: var(--qb-font);
+    outline: none;
+    transition: border-color .2s;
+  }
+  .qb-input:focus { border-color: var(--qb-accent); }
+  .qb-input::placeholder { color: var(--qb-muted); opacity: .55; }
+
+  .qb-btn {
+    border-radius: var(--qb-radius-sm);
+    font-family: var(--qb-font);
+    border: 1px solid var(--qb-border);
+    color: var(--qb-text);
+    background: transparent;
+    transition: background .2s, color .2s, border-color .2s;
+  }
+  .qb-btn:hover { background: var(--qb-accent-soft); color: var(--qb-accent); border-color: var(--qb-accent); }
+
+  .qb-btn-accent {
+    border-radius: var(--qb-radius-sm);
+    font-family: var(--qb-font);
+    background: var(--qb-accent);
+    color: var(--qb-accent-contrast);
+    border: 1px solid var(--qb-accent);
+    transition: background .2s, border-color .2s, opacity .2s;
+  }
+  .qb-btn-accent:hover { background: var(--qb-accent-strong); border-color: var(--qb-accent-strong); }
+  .qb-btn-accent:disabled { opacity: .35; cursor: not-allowed; }
+
+  .qb-chip {
+    border-radius: 9999px;
+    font-family: var(--qb-font);
+    background: var(--qb-accent-soft);
+    color: var(--qb-accent);
+    border: 1px solid var(--qb-accent-soft);
+  }
+
+  .qb-accent-text { color: var(--qb-accent); }
+  .qb-accent-bg { background: var(--qb-accent); color: var(--qb-accent-contrast); }
+  .qb-accent-soft-bg { background: var(--qb-accent-soft); }
+
+  .qb-bubble {
+    background: var(--qb-panel-2);
+    border: 1px solid var(--qb-border);
+    border-radius: var(--qb-radius);
+    color: var(--qb-text);
+    font-family: var(--qb-font);
+  }
+}
+
 .technical-panel {
   @apply bg-ui-elevated border-ui-border dark:bg-brand-elevated dark:border-white/5;
 }
@@ -64,13 +284,14 @@
   100% { transform: translateY(100%); }
 }
 
+/* Geeky-only decoration: the scanline reads as "techy" and is hidden for Halo. */
 .scanline {
   width: 100%;
   height: 100px;
   z-index: 10;
-  background: linear-gradient(0deg, 
-    rgba(0, 0, 0, 0) 0%, 
-    rgba(34, 211, 238, 0.02) 50%, 
+  background: linear-gradient(0deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(34, 211, 238, 0.02) 50%,
     rgba(0, 0, 0, 0) 100%
   );
   opacity: 0.1;
@@ -78,8 +299,8 @@
   bottom: 100%;
   animation: scanline 8s linear infinite;
 }
+[data-theme="halo"] .scanline { display: none; }
 
 .glass-panel {
   @apply bg-white/70 dark:bg-white/[0.03] backdrop-blur-md border border-black/5 dark:border-white/5;
 }
-

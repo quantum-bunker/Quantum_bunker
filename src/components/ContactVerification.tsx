@@ -41,7 +41,7 @@ function PeerVerificationRow({
   const meta = STATUS_META[status];
   const ready = !!safetyNumber && !!fingerprint;
   return (
-    <div className={`p-2.5 border space-y-2 group ${status === 'changed' ? 'border-red-500/40 bg-red-500/5' : 'border-black/5 dark:border-white/5 bg-white dark:bg-black/20'}`}>
+    <div className={`qb-rounded-sm p-2.5 border space-y-2 group ${status === 'changed' ? 'border-red-500/40 bg-red-500/5' : 'qb-panel-flat'}`}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-mono text-slate-700 dark:text-slate-200 uppercase tracking-widest truncate font-bold">{label}</span>
         <span className={`flex items-center gap-1 text-[8px] font-mono uppercase tracking-widest px-1.5 py-0.5 border rounded-sm shrink-0 ${meta.cls}`}>
@@ -98,7 +98,7 @@ export function ContactVerificationPanel({
 }) {
   return (
     <div className="space-y-3">
-      <div className="p-2.5 border border-black/5 dark:border-white/5 bg-white dark:bg-black/20 space-y-1.5 group">
+      <div className="qb-panel-flat p-2.5 space-y-1.5 group">
         <div className="flex items-center justify-between">
           <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">YOUR FINGERPRINT</span>
           <CopyButton value={ownFingerprint} />
@@ -142,7 +142,7 @@ export function KeyChangeWarning({
   if (changedPeers.length === 0) return null;
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-red-950/80 backdrop-blur-md p-4">
-      <div className="w-full max-w-lg border-2 border-red-500 bg-ui-elevated dark:bg-brand-elevated shadow-2xl">
+      <div className="qb-rounded w-full max-w-lg border-2 border-red-500 qb-surface shadow-2xl">
         <div className="flex items-center gap-3 px-5 py-4 bg-red-500/15 border-b-2 border-red-500 animate-pulse">
           <AlertTriangle size={24} className="text-red-500 shrink-0" />
           <div>
