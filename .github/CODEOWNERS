@@ -1,0 +1,13 @@
+# CODEOWNERS — Quantum Bunker
+#
+# @HarshaReddyVardhan is the sole owner of every file in this repository.
+#
+# Effect (when "Require review from Code Owners" is ON in a branch ruleset):
+#   • staging / main  → only @HarshaReddyVardhan satisfies the code-owner
+#                        review requirement; no one else can unblock the merge.
+#   • develop         → code-owner review is NOT required by that ruleset,
+#                        so any contributor with Write access can approve.
+#
+# GitHub uses the last matching pattern, so a catch-all at the end is correct.
+
+*  @HarshaReddyVardhan

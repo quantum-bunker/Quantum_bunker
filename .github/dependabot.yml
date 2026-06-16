@@ -1,0 +1,67 @@
+version: 2
+
+updates:
+
+  # ── Root npm package ───────────────────────────────────────────────────────
+  # PRs target develop so they go through the full CI + 1-approval gate.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    target-branch: "develop"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    # Group non-breaking updates into one PR per week to reduce noise.
+    # Major-version bumps are always opened as individual PRs (default).
+    groups:
+      non-breaking-production:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      non-breaking-dev:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── CLI sub-package ────────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/packages/cli"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "UTC"
+    target-branch: "develop"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "cli"
+    commit-message:
+      prefix: "chore(deps-cli)"
+      include: "scope"
+
+  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  # Keeps workflow action versions (actions/checkout, etc.) up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "UTC"
+    target-branch: "develop"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"

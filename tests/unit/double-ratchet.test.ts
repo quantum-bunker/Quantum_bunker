@@ -6,7 +6,7 @@ import { DoubleRatchet } from '../../src/crypto/double-ratchet';
 function sharedChainKey(): Uint8Array {
   const a = generateKeyPair();
   const b = generateKeyPair();
-  const [ck] = hkdf(new Uint8Array(32), new Uint8Array(32), 1);
+  const [ck] = hkdf(new Uint8Array(32), new Uint8Array(32), 2);
   return ck;
 }
 

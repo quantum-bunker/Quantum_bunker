@@ -18,10 +18,10 @@ function makeRes() {
 }
 
 describe('createRateLimiter', () => {
-  let next: ReturnType<typeof vi.fn>;
+  let next: NextFunction;
 
   beforeEach(() => {
-    next = vi.fn();
+    next = vi.fn() as unknown as NextFunction;
     vi.useFakeTimers();
   });
 

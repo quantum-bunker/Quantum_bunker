@@ -1,0 +1,210 @@
+name: Deploy
+
+# Fires only on direct pushes to the protected branches — which means a PR
+# was reviewed, approved (by CODEOWNERS where required), and merged.
+# The CI pipeline already ran on the PR; this workflow handles deployment.
+on:
+  push:
+    branches:
+      - develop
+      - staging
+      - main
+
+# Never run two deployments to the same target in parallel.
+# cancel-in-progress: false for staging/production so in-flight deploys finish.
+permissions:
+  contents: read
+  deployments: write
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dev — automatic, no approval gate
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  deploy-dev:
+    name: Deploy → Development
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: true   # dev: latest commit wins
+
+    # The "development" GitHub Environment has no required reviewers,
+    # so this job starts immediately.
+    # Create it at: Settings > Environments > New environment > "development"
+    environment:
+      name: development
+      url: ${{ vars.DEV_URL }}   # set in: Settings > Environments > development > Variables
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to development
+        run: |
+          echo "Deploying commit ${{ github.sha }} to development..."
+          # ── REPLACE WITH YOUR ACTUAL DEPLOY COMMAND ──────────────────────────
+          # Option A — SSH + PM2:
+          #   ssh -i "${{ secrets.DEV_SSH_KEY }}" \
+          #       ${{ secrets.DEV_SSH_USER }}@${{ secrets.DEV_HOST }} \
+          #       "cd /app && git pull origin develop && npm ci && npm run build && pm2 restart quantum-bunker"
+          #
+          # Option B — rsync built artefacts:
+          #   rsync -avz --delete dist/ \
+          #       ${{ secrets.DEV_SSH_USER }}@${{ secrets.DEV_HOST }}:/var/www/quantum-bunker/
+          #
+          # Option C — platform CLI (Railway, Render, Fly.io, …):
+          #   fly deploy --config fly.dev.toml --access-token ${{ secrets.FLY_API_TOKEN }}
+          # ─────────────────────────────────────────────────────────────────────
+          echo "Dev deployment complete."
+
+      - name: Write job summary
+        run: |
+          echo "## 🛠️ Dev Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Actor:**  ${{ github.actor }}"  >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Time:**   $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Staging — requires manual approval from @HarshaReddyVardhan
+  # ─────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy → Staging
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false  # never cancel a staging deploy mid-flight
+
+    # The "staging" GitHub Environment MUST have @HarshaReddyVardhan as a
+    # required reviewer so this job waits for explicit owner approval even
+    # after the PR was merged.
+    # Configure at: Settings > Environments > staging > Required reviewers
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to staging
+        run: |
+          echo "Deploying commit ${{ github.sha }} to staging..."
+          # ── REPLACE WITH YOUR ACTUAL DEPLOY COMMAND ──────────────────────────
+          # ssh -i "${{ secrets.STAGING_SSH_KEY }}" \
+          #     ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_HOST }} \
+          #     "cd /app && git pull origin staging && npm ci && npm run build && pm2 restart quantum-bunker"
+          # ─────────────────────────────────────────────────────────────────────
+          echo "Staging deployment complete."
+
+      - name: Run smoke test against staging
+        run: |
+          STAGING_URL="${{ vars.STAGING_URL }}"
+          if [ -n "$STAGING_URL" ]; then
+            echo "Checking $STAGING_URL/api/health …"
+            curl --fail --silent --max-time 10 "$STAGING_URL/api/health" \
+              && echo "Health check passed." \
+              || echo "::warning::Health check failed — investigate manually."
+          else
+            echo "::notice::STAGING_URL variable not set; skipping smoke test."
+          fi
+
+      - name: Write job summary
+        run: |
+          echo "## 🚀 Staging Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Actor:**  ${{ github.actor }}"  >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Time:**   $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Production — requires manual approval + optional wait timer
+  # ─────────────────────────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy → Production
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    # The "production" GitHub Environment MUST have:
+    #   - Required reviewer: @HarshaReddyVardhan
+    #   - (Recommended) Wait timer: 5 minutes (gives time to abort accidental merges)
+    # Configure at: Settings > Environments > production > Required reviewers + Wait timer
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Deploy to production
+        run: |
+          echo "Deploying commit ${{ github.sha }} to production..."
+          # ── REPLACE WITH YOUR ACTUAL DEPLOY COMMAND ──────────────────────────
+          # ssh -i "${{ secrets.PROD_SSH_KEY }}" \
+          #     ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_HOST }} \
+          #     "cd /app && git pull origin main && npm ci && npm run build && pm2 restart quantum-bunker"
+          # ─────────────────────────────────────────────────────────────────────
+          echo "Production deployment complete."
+
+      - name: Run smoke test against production
+        run: |
+          PROD_URL="${{ vars.PROD_URL }}"
+          if [ -n "$PROD_URL" ]; then
+            echo "Checking $PROD_URL/api/health …"
+            curl --fail --silent --max-time 10 "$PROD_URL/api/health" \
+              && echo "Health check passed." \
+              || { echo "::error::Production health check FAILED."; exit 1; }
+          else
+            echo "::notice::PROD_URL variable not set; skipping smoke test."
+          fi
+
+      - name: Write job summary
+        run: |
+          echo "## 🚀 Production Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Actor:**  ${{ github.actor }}"  >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Time:**   $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_STEP_SUMMARY"

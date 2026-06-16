@@ -127,6 +127,20 @@ export class WsTransport implements IRelayTransport {
     }, RELAY_LIMITS.JOIN_TIMEOUT_MS);
     ws.on('close', () => clearTimeout(joinTimeout));
 
+    // A protocol-level socket error (e.g. an oversized frame past the server's
+    // maxPayload) is emitted by ws on the socket itself. Without a listener
+    // Node escalates it to an uncaught exception and the relay crashes — one
+    // malformed client must never take the process down. Emit a domain event
+    // and let the socket close on its own.
+    ws.on('error', (err) => {
+      this.eventBus.emit({
+        type: 'EnvelopeRejected',
+        sessionId: currentSessionId ?? 'unknown',
+        occurredAt: Date.now(),
+        payload: { reason: (err as Error)?.message ?? 'socket error' },
+      });
+    });
+
     ws.on('message', async (data) => {
       try {
         const now = Date.now();

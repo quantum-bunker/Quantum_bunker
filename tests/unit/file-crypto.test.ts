@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encryptFileData, decryptFileData, FileCipher } from '../../src/file-crypto';
+import { fromBase64, toBase64 } from '../../src/crypto/noise-primitives';
 
 const ciphers: FileCipher[] = ['AES-GCM', 'ChaCha20-Poly1305'];
 
@@ -20,8 +21,13 @@ describe('file-crypto password layer', () => {
     });
 
     it(`${algo}: returns null when the ciphertext is tampered`, async () => {
-      const { data, lock } = await encryptFileData(new Uint8Array([9, 9, 9, 9]), 'pw', algo);
-      const corrupted = data.slice(0, -2) + (data.endsWith('A') ? 'B' : 'A') + '=';
+      const plaintext = new Uint8Array([9, 9, 9, 9]);
+      const { data, lock } = await encryptFileData(plaintext, 'pw', algo);
+      // Decode to raw ciphertext, flip a byte, re-encode – guarantees the
+      // binary ciphertext bytes differ so the AEAD tag cannot match.
+      const raw = fromBase64(data);
+      raw[0] ^= 0x01;
+      const corrupted = toBase64(raw);
       expect(await decryptFileData(corrupted, lock, 'pw')).toBeNull();
     });
   }
