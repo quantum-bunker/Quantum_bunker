@@ -6,7 +6,8 @@ import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
 import { useP2P } from './useP2P';
 import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
 import { randomId } from './random';
-import { buildJoinCredentials } from './membership-store';
+import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
+import { loadContacts, upsertContact } from './contacts-store';
 import {
   FileAttachment,
   encodeFileAttachment,
@@ -62,6 +63,19 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const [safetyNumbers, setSafetyNumbers] = useState<Record<string, string>>({});
   const [fingerprints, setFingerprints] = useState<Record<string, string>>({});
   const [ownFingerprint, setOwnFingerprint] = useState<string | null>(null);
+  // Whitelist (client-side mutual trust). peerMemberKeys maps a present peerId to
+  // its broadcast membership public key + label; peerPinned holds each peer's
+  // announced "peers I have pinned" set. A pair is mutually whitelisted iff each
+  // has pinned the other. All of this rides opaque SIGNALING frames — the relay
+  // never sees it.
+  const [peerMemberKeys, setPeerMemberKeys] = useState<Record<string, { pk: string; label: string }>>({});
+  const [peerPinned, setPeerPinned] = useState<Record<string, string[]>>({});
+  const [myPinned, setMyPinned] = useState<string[]>([]);
+  const [whitelistRequests, setWhitelistRequests] = useState<{ peerId: string; label: string; pk: string }[]>([]);
+  const [contactsTick, setContactsTick] = useState(0);
+  const memberIdRef = useRef(loadIdentity(MEMBER_KEY));
+  const peerMemberKeysRef = useRef<Record<string, { pk: string; label: string }>>({});
+  peerMemberKeysRef.current = peerMemberKeys;
   const socketRef = useRef<WebSocket | null>(null);
   const channelsRef = useRef<PeerChannels | null>(null);
   // Latest resolved static identity (null = burner). Read at connect time so an
@@ -346,6 +360,25 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
           } else if (sig.kind === 'alias' && typeof sig.alias === 'string' && sig.alias.trim()) {
             const alias = sig.alias.trim().slice(0, 32);
             setPeerAliases(prev => (prev[env.from] === alias ? prev : { ...prev, [env.from]: alias }));
+          } else if (sig.kind === 'wl-id' && typeof sig.memberPublicKey === 'string' && sig.memberPublicKey) {
+            const pk = sig.memberPublicKey;
+            const label = typeof sig.label === 'string' ? sig.label.slice(0, 32) : '';
+            setPeerMemberKeys(prev => (prev[env.from]?.pk === pk && prev[env.from]?.label === label ? prev : { ...prev, [env.from]: { pk, label } }));
+          } else if (sig.kind === 'wl-state' && Array.isArray(sig.pinned)) {
+            const pinned = (sig.pinned as unknown[]).filter((x): x is string => typeof x === 'string');
+            setPeerPinned(prev => ({ ...prev, [env.from]: pinned }));
+          } else if (sig.kind === 'whitelist' && sig.to === peerId) {
+            const pk = typeof sig.memberPublicKey === 'string' ? sig.memberPublicKey : '';
+            const label = typeof sig.label === 'string' ? sig.label.slice(0, 32) : '';
+            if (sig.action === 'request' && pk) {
+              setWhitelistRequests(prev => prev.some(r => r.peerId === env.from) ? prev : [...prev, { peerId: env.from, label, pk }]);
+            } else if (sig.action === 'accept' && pk) {
+              // They pinned us; mirror by pinning them so the pair is mutual.
+              upsertContact(pk, label);
+              setContactsTick(t => t + 1);
+            } else if (sig.action === 'decline') {
+              setWhitelistRequests(prev => prev.filter(r => r.peerId !== env.from));
+            }
           }
         } catch {
           // Ignore malformed signaling frames
@@ -919,6 +952,53 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     }
   }, [isConnected, activePeers.length, sendSignal]);
 
+  // Announce our membership public key so peers can map us to a pinnable identity
+  // for the whitelist (the chat's Noise key is a different keypair).
+  useEffect(() => {
+    if (!isConnected || activePeers.length <= 1) return;
+    const label = (localStorage.getItem('qb-join-msg') || '').trim().slice(0, 32);
+    sendSignal({ kind: 'wl-id', memberPublicKey: memberIdRef.current.publicKey, label });
+  }, [isConnected, activePeers.length, sendSignal]);
+
+  // Recompute which present peers we have pinned (mutual-trust candidates), then
+  // broadcast that set so every client can derive the mutual/whitelist-group view.
+  useEffect(() => {
+    const contacts = loadContacts();
+    const pinned = activePeers.filter(p => {
+      const pk = peerMemberKeys[p]?.pk;
+      return p !== peerId && pk && contacts.some(c => c.publicKey === pk);
+    });
+    setMyPinned(prev => (prev.length === pinned.length && prev.every(x => pinned.includes(x)) ? prev : pinned));
+  }, [activePeers, peerMemberKeys, peerId, contactsTick]);
+
+  useEffect(() => {
+    if (!isConnected || activePeers.length <= 1) return;
+    sendSignal({ kind: 'wl-state', pinned: myPinned });
+  }, [isConnected, activePeers.length, myPinned, sendSignal]);
+
+  const requestWhitelist = useCallback((targetPeerId: string) => {
+    const label = (localStorage.getItem('qb-join-msg') || '').trim().slice(0, 32);
+    sendSignal({ kind: 'whitelist', action: 'request', to: targetPeerId, memberPublicKey: memberIdRef.current.publicKey, label });
+  }, [sendSignal]);
+
+  const acceptWhitelist = useCallback((targetPeerId: string) => {
+    const req = whitelistRequests.find(r => r.peerId === targetPeerId);
+    const known = peerMemberKeysRef.current[targetPeerId];
+    const pk = req?.pk || known?.pk;
+    if (pk) {
+      upsertContact(pk, req?.label || known?.label || '');
+      setContactsTick(t => t + 1);
+    }
+    const label = (localStorage.getItem('qb-join-msg') || '').trim().slice(0, 32);
+    sendSignal({ kind: 'whitelist', action: 'accept', to: targetPeerId, memberPublicKey: memberIdRef.current.publicKey, label });
+    setWhitelistRequests(prev => prev.filter(r => r.peerId !== targetPeerId));
+  }, [whitelistRequests, sendSignal]);
+
+  const declineWhitelist = useCallback((targetPeerId: string) => {
+    sendSignal({ kind: 'whitelist', action: 'decline', to: targetPeerId });
+    setWhitelistRequests(prev => prev.filter(r => r.peerId !== targetPeerId));
+  }, [sendSignal]);
+
   // Expire typing indicators if no explicit "stop" frame arrives.
   useEffect(() => {
     const interval = setInterval(() => {
@@ -954,5 +1034,5 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed };
+  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist };
 }
