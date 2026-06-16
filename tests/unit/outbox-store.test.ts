@@ -89,6 +89,66 @@ describe('MessageOutbox', () => {
     expect(await outbox.pending()).toHaveLength(1);
   });
 
+  it('filters pending by an explicit recipient, always including wildcards', async () => {
+    await outbox.enqueue({ nonce: 'w', to: WILDCARD_RECIPIENT, type: EnvelopeType.NOISE_MESSAGE, plaintext: 'any', timestamp: 1 });
+    await outbox.enqueue({ nonce: 'a', to: 'peer-a', type: EnvelopeType.NOISE_MESSAGE, plaintext: 'for a', timestamp: 2 });
+    await outbox.enqueue({ nonce: 'b', to: 'peer-b', type: EnvelopeType.NOISE_MESSAGE, plaintext: 'for b', timestamp: 3 });
+
+    const forA = await outbox.pending('peer-a');
+    expect(forA.map(e => e.nonce)).toEqual(['w', 'a']); // wildcard + addressed, in timestamp order
+    expect(await outbox.pending()).toHaveLength(3); // no filter → everything
+  });
+
+  it('increments attempts each time an entry is drained', async () => {
+    await outbox.enqueue(entry('retry', 'flaky'));
+    await outbox.drain(() => true, { sleep: noSleep });
+    expect((await outbox.pending())[0].attempts).toBe(1);
+    await outbox.drain(() => true, { sleep: noSleep });
+    expect((await outbox.pending())[0].attempts).toBe(2);
+  });
+
+  it('stops draining at the first entry with no live path, preserving the rest', async () => {
+    await outbox.enqueue(entry('n1', 'first', 1));
+    await outbox.enqueue(entry('n2', 'second', 2));
+    await outbox.enqueue(entry('n3', 'third', 3));
+    const seen: string[] = [];
+    const count = await outbox.drain(e => {
+      seen.push(e.nonce);
+      return e.nonce !== 'n2'; // transport drops mid-flush
+    }, { sleep: noSleep });
+    expect(count).toBe(1); // only n1 sent
+    expect(seen).toEqual(['n1', 'n2']); // n2 attempted then aborted; n3 never tried
+    expect((await outbox.pending())).toHaveLength(3); // nothing removed — ack does that
+  });
+
+  it('supports an async send callback', async () => {
+    await outbox.enqueue(entry('async-1', 'x'));
+    const count = await outbox.drain(async () => Promise.resolve(true), { sleep: noSleep });
+    expect(count).toBe(1);
+  });
+
+  it('clear() empties the queue', async () => {
+    await outbox.enqueue(entry('c1', 'gone'));
+    await outbox.enqueue(entry('c2', 'gone too'));
+    await outbox.clear();
+    expect(await outbox.pending()).toHaveLength(0);
+  });
+
+  it('drains nothing when the queue is empty (no spacer sleeps)', async () => {
+    const waits: number[] = [];
+    const count = await outbox.drain(() => true, { sleep: async ms => { waits.push(ms); } });
+    expect(count).toBe(0);
+    expect(waits).toEqual([]);
+  });
+
+  it('persists across a reopen with the same secret (sealed at rest, decryptable)', async () => {
+    await outbox.enqueue(entry('survivor', 'still here'));
+    const reopened = await MessageOutbox.open(SESSION, SECRET, backend);
+    const pending = await reopened.pending();
+    expect(pending.map(e => e.nonce)).toEqual(['survivor']);
+    expect(pending[0].plaintext).toBe('still here');
+  });
+
   it('throttles flush to respect MSG_PER_SECOND_LIMIT', async () => {
     expect(FLUSH_INTERVAL_MS).toBe(100); // 1000 / 10
     await outbox.enqueue(entry('a', '1', 1));

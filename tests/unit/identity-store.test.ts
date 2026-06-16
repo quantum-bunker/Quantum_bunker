@@ -7,6 +7,7 @@ import {
   createLongTermIdentity,
   unlockLongTermIdentity,
   promoteSessionIdentity,
+  detectSessionIdentity,
   clearLongTermIdentity,
   StoredIdentity,
 } from '../../src/crypto/identity-store';
@@ -126,5 +127,61 @@ describe('identity-store: migration', () => {
   it('returns null when there is no session identity to promote', async () => {
     expect(await promoteSessionIdentity(sessionId, 'pw')).toBeNull();
     expect(hasLongTermIdentity()).toBe(false);
+  });
+
+  it('rejects promotion with an empty passphrase before touching storage', async () => {
+    seedSessionIdentity();
+    await expect(promoteSessionIdentity(sessionId, '')).rejects.toThrow('IDENTITY_PASSPHRASE_REQUIRED');
+    expect(hasLongTermIdentity()).toBe(false);
+  });
+
+  it('skips promotion of a corrupt session blob (wrong field types)', async () => {
+    session.raw()[sessionIdentityKey(sessionId)] = JSON.stringify({ pub: 123, sec: false });
+    expect(await promoteSessionIdentity(sessionId, 'pw')).toBeNull();
+  });
+});
+
+describe('identity-store: detectSessionIdentity', () => {
+  it('finds the sessionId a legacy per-session identity is keyed under', () => {
+    session.raw()[sessionIdentityKey('sess-abc')] = JSON.stringify({ pub: 'p', sec: 's' });
+    Object.defineProperty(session, 'length', { value: 1, configurable: true });
+    session.key = vi.fn(() => sessionIdentityKey('sess-abc'));
+    expect(detectSessionIdentity()).toBe('sess-abc');
+  });
+
+  it('returns null when no per-session identity is present', () => {
+    Object.defineProperty(session, 'length', { value: 0, configurable: true });
+    session.key = vi.fn(() => null);
+    expect(detectSessionIdentity()).toBeNull();
+  });
+
+  it('returns null when sessionStorage access throws', () => {
+    Object.defineProperty(session, 'length', {
+      get() { throw new Error('storage disabled'); },
+      configurable: true,
+    });
+    expect(detectSessionIdentity()).toBeNull();
+  });
+});
+
+describe('identity-store: storage-failure resilience', () => {
+  it('hasLongTermIdentity returns false when localStorage throws', () => {
+    local.getItem = vi.fn(() => { throw new Error('blocked'); });
+    expect(hasLongTermIdentity()).toBe(false);
+  });
+
+  it('unlock returns null on a corrupt (non-JSON) stored blob', async () => {
+    local.raw()[LONG_TERM_IDENTITY_KEY] = '{not valid json';
+    expect(await unlockLongTermIdentity('pw')).toBeNull();
+  });
+
+  it('unlock returns null on a structurally invalid stored blob', async () => {
+    local.raw()[LONG_TERM_IDENTITY_KEY] = JSON.stringify({ v: 2, pub: 'p' });
+    expect(await unlockLongTermIdentity('pw')).toBeNull();
+  });
+
+  it('clearLongTermIdentity swallows a localStorage failure', () => {
+    local.removeItem = vi.fn(() => { throw new Error('blocked'); });
+    expect(() => clearLongTermIdentity()).not.toThrow();
   });
 });
