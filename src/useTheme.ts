@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type ThemeFamily = 'geeky' | 'halo';
+export type ThemeFamily = 'geeky' | 'halo' | 'classic';
 export type ThemeMode = 'light' | 'dark';
 
 export const THEME_FAMILIES: { id: ThemeFamily; label: string; hint: string }[] = [
   { id: 'geeky', label: 'Geeky', hint: 'Terminal · mono · neon' },
   { id: 'halo', label: 'Halo', hint: 'Soft · rounded · calm' },
+  { id: 'classic', label: 'Classic', hint: 'Elegant · serif · timeless' },
 ];
 
 const FAMILY_KEY = 'qb-theme-id';
@@ -13,7 +14,7 @@ const MODE_KEY = 'qb-theme';
 
 function readFamily(): ThemeFamily {
   const saved = localStorage.getItem(FAMILY_KEY);
-  return saved === 'halo' ? 'halo' : 'geeky';
+  return saved === 'halo' || saved === 'classic' ? saved : 'geeky';
 }
 
 function readMode(): ThemeMode {

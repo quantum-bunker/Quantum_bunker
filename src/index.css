@@ -128,6 +128,62 @@
   --qb-input-bg: rgba(255,255,255,0.05);
 }
 
+/* ── Classic (timeless, warm parchment + antique gold) ──────────────────── */
+[data-theme="classic"] {
+  --qb-radius: 8px;
+  --qb-radius-sm: 6px;
+  --qb-font: Georgia, "Times New Roman", Cambria, serif;
+  --qb-label-tt: none;
+  --qb-label-spacing: 0.02em;
+  --qb-accent: #8a5a2b;
+  --qb-accent-strong: #6b4520;
+  --qb-accent-bright: #b07d3f;
+}
+[data-theme="classic"]:not(.dark) {
+  --qb-bg: #f3ece0;
+  --qb-surface: #fffcf5;
+  --qb-aside: #efe7d6;
+  --qb-panel: #fffcf5;
+  --qb-panel-2: #f8f2e6;
+  --qb-border: rgba(70,50,20,0.14);
+  --qb-text: #3a2d20;
+  --qb-heading: #1c1308;
+  --qb-muted: #76674f;
+  --qb-accent: #935f29;
+  --qb-accent-strong: #6b4520;
+  --qb-accent-bright: #b07d3f;
+  --qb-accent-soft: rgba(147,95,41,0.12);
+  --qb-accent-contrast: #fffcf5;
+  --qb-shadow: 0 2px 12px rgba(70,50,20,0.10);
+  --qb-input-bg: rgba(70,50,20,0.05);
+  --qb-glass-bg: linear-gradient(140deg, rgba(255,253,247,0.82), rgba(245,238,224,0.62));
+  --qb-glass-border: rgba(255,255,255,0.65);
+  --qb-glass-shadow: 0 24px 70px -20px rgba(70,50,20,0.30), inset 0 1px 0 rgba(255,255,255,0.75);
+  --qb-blob-opacity: 0.30;
+}
+[data-theme="classic"].dark {
+  --qb-bg: #1c150d;
+  --qb-surface: #281f14;
+  --qb-aside: #1a130c;
+  --qb-panel: #281f14;
+  --qb-panel-2: #302418;
+  --qb-border: rgba(245,230,200,0.10);
+  --qb-text: #ecdfc4;
+  --qb-heading: #fbf0d7;
+  --qb-muted: #b6a482;
+  --qb-accent: #d4a35c;
+  --qb-accent-strong: #b07d3f;
+  --qb-accent-bright: #e7c489;
+  --qb-accent-soft: rgba(212,163,92,0.16);
+  --qb-accent-contrast: #1c150d;
+  --qb-shadow: 0 12px 32px rgba(0,0,0,0.5);
+  --qb-input-bg: rgba(245,230,200,0.06);
+  --qb-glass-bg: linear-gradient(140deg, rgba(52,40,26,0.78), rgba(28,21,13,0.58));
+  --qb-glass-border: rgba(245,230,200,0.14);
+  --qb-glass-shadow: 0 28px 70px -18px rgba(0,0,0,0.65), inset 0 1px 0 rgba(245,230,200,0.10);
+  --qb-blob-opacity: 0.40;
+}
+
 @layer base {
   html, body {
     @apply transition-colors duration-300;
@@ -300,7 +356,90 @@
   animation: scanline 8s linear infinite;
 }
 [data-theme="halo"] .scanline { display: none; }
+[data-theme="classic"] .scanline { display: none; }
 
 .glass-panel {
   @apply bg-white/70 dark:bg-white/[0.03] backdrop-blur-md border border-black/5 dark:border-white/5;
+}
+
+/* ── Liquid-glass landing (Classic) ──────────────────────────────────────────
+   A soft, depth-layered "liquid" surface: drifting accent blobs behind frosted
+   glass panels. Tokens (--qb-glass-*, --qb-blob-opacity) are theme-driven so the
+   warmth follows light/dark. Used by ClassicHome only. */
+@keyframes qb-drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(4%, -5%, 0) scale(1.10); }
+  66%      { transform: translate3d(-3%, 4%, 0) scale(0.94); }
+}
+@keyframes qb-drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(-5%, 5%, 0) scale(1.14); }
+}
+@keyframes qb-sheen {
+  0%   { background-position: -180% 0; }
+  100% { background-position: 180% 0; }
+}
+
+.qb-liquid-field {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.qb-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(72px);
+  opacity: var(--qb-blob-opacity, 0.3);
+  will-change: transform;
+}
+.qb-blob-a {
+  width: 46vw; height: 46vw; max-width: 600px; max-height: 600px;
+  top: -14%; left: -8%;
+  background: radial-gradient(circle at 35% 35%, var(--qb-accent-bright), transparent 68%);
+  animation: qb-drift-a 20s ease-in-out infinite;
+}
+.qb-blob-b {
+  width: 42vw; height: 42vw; max-width: 560px; max-height: 560px;
+  bottom: -18%; right: -6%;
+  background: radial-gradient(circle at 65% 65%, var(--qb-accent), transparent 68%);
+  animation: qb-drift-b 26s ease-in-out infinite;
+}
+.qb-blob-c {
+  width: 34vw; height: 34vw; max-width: 460px; max-height: 460px;
+  top: 26%; right: 22%;
+  background: radial-gradient(circle, var(--qb-accent-strong), transparent 70%);
+  opacity: calc(var(--qb-blob-opacity, 0.3) * 0.7);
+  animation: qb-drift-a 32s ease-in-out infinite reverse;
+}
+
+.qb-glass {
+  background: var(--qb-glass-bg);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid var(--qb-glass-border);
+  border-radius: var(--qb-radius);
+  box-shadow: var(--qb-glass-shadow);
+}
+
+/* Brushed-gold sheen sweeping across the wordmark for the "liquid" read. */
+.qb-sheen-text {
+  background: linear-gradient(
+    100deg,
+    var(--qb-accent) 20%,
+    var(--qb-accent-bright) 42%,
+    var(--qb-accent-contrast) 50%,
+    var(--qb-accent-bright) 58%,
+    var(--qb-accent) 80%
+  );
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: qb-sheen 6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qb-blob-a, .qb-blob-b, .qb-blob-c, .qb-sheen-text { animation: none; }
 }
