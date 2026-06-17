@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Session, SessionStatus } from '../../../shared/contracts/v1/session';
 import { SESSION_LIMITS } from '../../core/constants';
+import { DomainError } from '../../core/errors';
 import { ISessionStore } from '../ports/session-store.port';
 import { IEventBus } from '../ports/event-bus.port';
 
@@ -11,7 +12,11 @@ export class CreateSession {
   ) {}
 
   async execute(expiresInSeconds?: number, name?: string, hostPublicKey?: string): Promise<Session> {
-    const ttl = expiresInSeconds 
+    if (await this.store.count() >= SESSION_LIMITS.MAX_ACTIVE_SESSIONS) {
+      throw new DomainError('SESSION_CAPACITY_REACHED', 'Relay is at session capacity');
+    }
+
+    const ttl = expiresInSeconds
       ? expiresInSeconds * 1000 
       : SESSION_LIMITS.DEFAULT_TTL_MS;
     

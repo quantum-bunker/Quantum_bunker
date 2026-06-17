@@ -17,6 +17,10 @@ export class InMemorySessionStore implements ISessionStore {
     this.sessions.delete(id);
   }
 
+  async count(): Promise<number> {
+    return this.sessions.size;
+  }
+
   async touch(id: string): Promise<void> {
     const sess = this.sessions.get(id);
     if (sess) {

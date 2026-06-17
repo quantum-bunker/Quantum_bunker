@@ -7,7 +7,20 @@ import {
   HOST_KEY,
   TOKENS_KEY,
 } from '../../src/membership-store';
-import { decodeToken } from '../../src/shared/membership';
+import {
+  decodeToken,
+  generateIdentity,
+  issueMembershipToken,
+  encodeToken,
+} from '../../src/shared/membership';
+
+// Builds a real, signed, encoded membership token for a session, expiring
+// `ttlMs` from `now` so loadTokens can evaluate its embedded `exp`.
+function makeToken(sessionId: string, ttlMs: number, now = Date.now()): string {
+  const host = generateIdentity();
+  const member = generateIdentity();
+  return encodeToken(issueMembershipToken(host.secretKey, member.publicKey, sessionId, ttlMs, now));
+}
 
 // Mock localStorage
 const localStorageMock = (() => {
@@ -81,8 +94,11 @@ describe('loadTokens', () => {
     vi.clearAllMocks();
   });
 
-  it('returns stored tokens when present', () => {
-    const tokens = { 'sess-1': 'token-abc', 'sess-2': 'token-xyz' };
+  it('returns stored tokens when present and unexpired', () => {
+    const tokens = {
+      'sess-1': makeToken('sess-1', 60_000),
+      'sess-2': makeToken('sess-2', 60_000),
+    };
     localStorageMock.setItem(TOKENS_KEY, JSON.stringify(tokens));
 
     const result = loadTokens();
@@ -99,6 +115,40 @@ describe('loadTokens', () => {
     const result = loadTokens();
     expect(result).toEqual({});
   });
+
+  it('drops expired tokens and keeps live ones', () => {
+    const live = makeToken('sess-live', 60_000);
+    const expired = makeToken('sess-expired', 60_000, Date.now() - 120_000);
+    localStorageMock.setItem(TOKENS_KEY, JSON.stringify({ 'sess-live': live, 'sess-expired': expired }));
+
+    const result = loadTokens();
+    expect(result).toEqual({ 'sess-live': live });
+  });
+
+  it('drops undecodable tokens', () => {
+    localStorageMock.setItem(TOKENS_KEY, JSON.stringify({ 'sess-1': 'not-a-real-token' }));
+    const result = loadTokens();
+    expect(result).toEqual({});
+  });
+
+  it('rewrites storage when it prunes entries', () => {
+    const live = makeToken('sess-live', 60_000);
+    localStorageMock.setItem(TOKENS_KEY, JSON.stringify({ 'sess-live': live, 'sess-dead': 'garbage' }));
+
+    loadTokens();
+
+    const persisted = JSON.parse(localStorageMock.getItem(TOKENS_KEY) as string);
+    expect(persisted).toEqual({ 'sess-live': live });
+  });
+
+  it('leaves storage untouched when nothing is pruned', () => {
+    const tokens = { 'sess-1': makeToken('sess-1', 60_000) };
+    localStorageMock.setItem(TOKENS_KEY, JSON.stringify(tokens));
+    vi.clearAllMocks();
+
+    loadTokens();
+    expect(localStorageMock.setItem).not.toHaveBeenCalled();
+  });
 });
 
 describe('buildJoinCredentials', () => {
@@ -114,15 +164,15 @@ describe('buildJoinCredentials', () => {
 
   it('returns token + join proof when a token exists', () => {
     // First load an identity to populate the member key
-    const member = loadIdentity(MEMBER_KEY);
+    loadIdentity(MEMBER_KEY);
 
-    // Store a token for the session
-    const tokens = { 'sess-1': 'encoded-token-value' };
-    localStorageMock.setItem(TOKENS_KEY, JSON.stringify(tokens));
+    // Store a real, unexpired token for the session
+    const token = makeToken('sess-1', 60_000);
+    localStorageMock.setItem(TOKENS_KEY, JSON.stringify({ 'sess-1': token }));
 
     const result = buildJoinCredentials('sess-1', 'peer-1');
     expect(result).not.toBeNull();
-    expect(result!.membershipToken).toBe('encoded-token-value');
+    expect(result!.membershipToken).toBe(token);
     expect(result!.joinProof).toBeDefined();
     expect(result!.joinProof.peerId).toBe('peer-1');
     expect(result!.joinProof.sessionId).toBe('sess-1');

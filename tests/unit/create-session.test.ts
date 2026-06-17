@@ -41,6 +41,22 @@ describe('CreateSession Use Case', () => {
     expect(session.expiresAt).toBe(session.createdAt + SESSION_LIMITS.DEFAULT_TTL_MS);
   });
 
+  it('refuses to create when the relay is at session capacity', async () => {
+    const fullStore = {
+      count: vi.fn().mockResolvedValue(SESSION_LIMITS.MAX_ACTIVE_SESSIONS),
+      save: vi.fn(),
+      get: vi.fn(),
+      delete: vi.fn(),
+      touch: vi.fn(),
+      cleanup: vi.fn(),
+    };
+    const capped = new CreateSession(fullStore, eventBus);
+    await expect(capped.execute(120, 'Overflow')).rejects.toMatchObject({
+      code: 'SESSION_CAPACITY_REACHED',
+    });
+    expect(fullStore.save).not.toHaveBeenCalled();
+  });
+
   it('should emit SessionCreated event', async () => {
     const spy = vi.spyOn(eventBus, 'emit');
     const session = await createSession.execute(300);

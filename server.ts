@@ -10,6 +10,7 @@ import { CreateSessionRequestSchema } from './src/shared/contracts/v1/schemas';
 import { PublicSessionInfo } from './src/shared/contracts/v1/session';
 import { CLEANUP_INTERVAL_MS, RELAY_LIMITS, REST_LIMITS, SESSION_LIMITS } from './src/backend/core/constants';
 import { safeEqual, trustProxy, torMode, onionAddress } from './src/backend/core/security';
+import { DomainError } from './src/backend/core/errors';
 import { createRateLimiter } from './src/backend/adapters/http/rate-limit.middleware';
 
 export async function setupApp() {
@@ -32,9 +33,16 @@ export async function setupApp() {
   // Background Tasks
   const cleanupInterval = setInterval(() => {
     container.transport.pruneStaleCounters();
-    container.cleanupSessions.execute().catch(err => {
-      console.error('Cleanup task failed:', err);
-    });
+    container.cleanupSessions.execute()
+      .then(expiredIds => {
+        // The store removal and socket teardown happen in the same tick, so a
+        // lingering peer cannot relay through (and thereby resurrect via save)
+        // a session the cleanup pass already reaped.
+        for (const id of expiredIds) container.transport.disconnectSession(id);
+      })
+      .catch(err => {
+        console.error('Cleanup task failed:', err);
+      });
   }, CLEANUP_INTERVAL_MS);
 
   const onion = onionAddress();
@@ -99,6 +107,9 @@ export async function setupApp() {
         hostRecoveryToken: session.hostRecoveryToken
       });
     } catch (err) {
+      if (err instanceof DomainError && err.code === 'SESSION_CAPACITY_REACHED') {
+        return res.status(503).json({ error: 'Relay is at capacity, try again later' });
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -183,10 +194,28 @@ export async function setupApp() {
 }
 
 async function startServer() {
-  const { server, PORT } = await setupApp();
+  const { server, wss, cleanupInterval, PORT } = await setupApp();
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Quantum Bunker running on http://0.0.0.0:${PORT}`);
   });
+
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}, draining connections...`);
+    clearInterval(cleanupInterval);
+    // Ephemerality is the design: closing sockets discards all in-memory
+    // sessions. We close the WS layer first so peers get a clean close frame,
+    // then stop accepting HTTP and exit once the listener is released.
+    for (const client of wss.clients) client.close(1001, 'Server shutting down');
+    wss.close();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
