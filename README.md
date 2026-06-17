@@ -155,6 +155,14 @@ Quantum Bunker follows **Clean Architecture (Ports & Adapters)** with centralize
 
 > 📘 See [`docs/architecture.md`](docs/architecture.md) for the full architecture breakdown.
 
+## 📐 Design & Diagrams
+
+Visual references render as images on GitHub (Mermaid):
+
+- [`docs/design-document.md`](docs/design-document.md) — full design document (goals, invariants, security, rationale)
+- [`docs/diagrams/workflows.md`](docs/diagrams/workflows.md) — workflow diagrams for every runtime case
+- [`docs/diagrams/architecture.md`](docs/diagrams/architecture.md) — structural & deployment diagrams
+
 ## 🤝 Contributing
 
 Contributions are welcome! Whether it's a bug fix, feature enhancement, documentation improvement, or security audit — we appreciate your help.

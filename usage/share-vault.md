@@ -1,28 +1,38 @@
 # Share Vault
 
 ## Definition
-Provides a QR code and a shareable link that others can use to join the current chat session.
+
+A panel providing a QR code and a shareable link that others can use to join the current active session.
 
 ## Purpose
-To let other users join the session without manually typing the vault hash ID.
+
+To let users invite peers to the session without requiring them to manually enter the vault hash ID.
 
 ## Access
-Left sidebar of the chat room, under the "Share Vault" heading. Visible to both host and member roles.
+
+Left sidebar of the chat room. Panel under "Share Vault". Available to both host and member roles — any participant can share the vault link.
 
 ## Usage Steps
-1. While in a chat room, locate the "Share Vault" panel in the left sidebar.
-2. Choose one of two methods:
-   - **QR code:** Have the other user scan the displayed QR code.
-   - **Share link:** Click "Copy_Share_Link" to copy the join URL to the clipboard. Send this link to the other user.
 
-## Options/Settings
-None.
+**Share via QR code:**
+1. In the left sidebar, locate the "Share Vault" panel.
+2. Have the other user open their camera / QR scanner app.
+3. Point it at the QR code displayed in the panel.
+4. Their device opens the join URL automatically.
+
+**Share via link:**
+1. In the "Share Vault" panel, click "Copy_Share_Link".
+2. A confirmation animation indicates the link was copied.
+3. Paste and send the link to the other user via any channel.
 
 ## Result
+
 - The copied link has the format `http://{domain}/join/{vault-hash-id}`.
-- When the recipient opens the link, the Enter_Vault field on the home screen auto-populates with the vault hash ID.
+- When the recipient opens the link, the "VAULT_HASH_ID" field on the home screen auto-populates with the vault hash, and the join path is stripped from the URL.
+- The QR code encodes the same URL.
 
 ## Notes/Limitations
-- The QR code and link are only valid while the session is active.
-- Both host and members can share the same vault link.
-- The share link encodes the same vault hash ID found in the "Active Session" panel.
+
+- The link and QR code are valid only while the session is active. Expired sessions cannot be joined.
+- Both host and members can share the link. The share link does not grant any special permissions — it only pre-fills the hash ID.
+- The shared link connects the recipient as a new member; the host must still approve unless the recipient has a valid whitelist membership token.

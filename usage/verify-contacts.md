@@ -1,47 +1,51 @@
 # Verify Contacts
 
 ## Definition
-A security verification panel that displays safety numbers and fingerprints for connected peers. Users compare these values out-of-band to confirm end-to-end encryption integrity and detect man-in-the-middle attacks.
+
+A panel that displays safety numbers and key fingerprints for connected peers. Users compare these values out-of-band (phone call, in-person) to confirm the cryptographic handshake is with the intended person.
 
 ## Purpose
-To validate that the peer connected via the relay is the intended person, not an impostor. Verification is the only defense against a compromised or malicious relay server.
+
+To detect man-in-the-middle attacks. The relay server — or an attacker who has compromised it — could theoretically substitute a different public key during the Noise Protocol handshake. Comparing safety numbers out-of-band is the only defense against this attack, since it requires a second trusted communication channel.
 
 ## Access
-Left sidebar of the chat room, panel labeled "Verify Contacts".
+
+Left sidebar of the chat room. Panel labeled "Verify Contacts". Appears after at least one peer has completed the Noise Protocol handshake.
 
 ## Usage Steps
 
 **Verify a peer:**
-1. While in a chat room with at least one connected peer, locate the "Verify Contacts" panel.
-2. After the Noise Protocol handshake completes, each peer appears with a safety number and fingerprint.
-3. Contact the peer through a separate trusted channel (call, in-person, another messaging app).
-4. Have the peer read their safety number from their "Verify Contacts" panel.
-5. Compare the safety number shown on your screen with what the peer reads. They must match exactly.
-6. If they match, click "Verify contact" under that peer's entry.
-7. The peer's status changes to "Verified" with a green shield icon.
+1. Wait for the Noise Protocol handshake to complete. The peer appears in the panel with a safety number.
+2. Contact the peer through a separate trusted channel (phone call, in-person conversation, another messaging app).
+3. Have the peer read their safety number from their "Verify Contacts" panel on their device.
+4. Compare the number they read to the number shown on your screen. They must match exactly.
+5. If they match, click "Verify contact" under that peer's entry.
+6. The peer's status changes to "Verified" with a green shield icon.
 
 **Unverify a peer:**
 1. Click "Unverify" under a previously verified peer.
-2. The status reverts to "Unverified".
+2. The status returns to "Unverified".
 
-**Re-verify after a key change:**
-1. If a peer's key changes, a full-screen red overlay appears with the title "Key Changed — Possible Interception".
-2. The overlay blocks all messaging until action is taken.
-3. Contact the peer out-of-band to confirm the new safety number.
-4. If confirmed, click "I confirmed it — re-verify".
-5. Alternatively, click "Clear pin" to remove the contact's pin and exit the overlay.
+**Respond to a key change alert:**
+1. If a pinned peer's public key changes since last verification, a full-screen red overlay appears titled "Key Changed — Possible Interception".
+2. The overlay blocks all messaging until you act.
+3. Contact the peer out-of-band to confirm their new safety number.
+4. If confirmed: click "I confirmed it — re-verify".
+5. If you cannot confirm or suspect interception: click "Clear pin" to remove the contact pin and exit the overlay. Do not continue messaging until the situation is resolved.
 
-## Options/Settings
-None.
+## Fields
 
-## Result
-- Verified peers show a green "Verified" label with a shield icon.
-- Unverified peers show an amber "Unverified" label with a question-mark shield.
-- Peers whose key has changed since last verification show a red "Key Changed" label with an alert shield.
-- The user's own fingerprint is displayed at the top of the panel for comparison.
+| Status | Icon | Meaning |
+|---|---|---|
+| Verified | Green shield | Safety number matched and confirmed out-of-band |
+| Unverified | Amber question-mark shield | Handshake complete but not yet verified |
+| Key Changed | Red alert shield | Key differs from the pinned key; possible interception |
+
+Your own fingerprint is shown at the top of the panel for sharing with your contact.
 
 ## Notes/Limitations
-- The "Verify Contacts" panel only populates after at least one peer has completed the Noise Protocol handshake.
-- Before handshake, the panel shows "Peers appear here after the handshake. Compare the safety number out of band, then verify."
-- Safety numbers and fingerprints are derived from cryptographic key exchange. Any change indicates a new key was negotiated — possibly due to relay interception.
-- Verification status is stored in the browser session only. It does not persist across page reloads.
+
+- The panel is empty and shows a prompt until at least one peer completes the Noise handshake.
+- Safety numbers and fingerprints are derived from the Noise handshake remote static key. Any change in key signals a new handshake — possibly due to relay-level interception or simply because the peer regenerated their key.
+- Verification status is stored in the browser session only. It is lost on page reload. A key-change alert will reappear if the pinned key still differs after reload.
+- Skipping verification is a choice, not an error. Unverified sessions are still end-to-end encrypted; verification only confirms identity.
