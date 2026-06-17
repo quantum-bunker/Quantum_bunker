@@ -125,7 +125,7 @@ jobs:
       # instead of spamming new ones.
       - name: Post CI result on PR
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
