@@ -1,28 +1,34 @@
 # Event Log
 
 ## Definition
-A real-time scrolling log in the chat room sidebar that displays WebSocket connection events, handshake status, and performance metrics.
+
+A real-time scrolling log panel in the chat room sidebar that displays WebSocket connection events, cryptographic handshake progress, and performance metrics.
 
 ## Purpose
-To provide operational visibility into the relay connection, WebSocket state, and session health.
+
+To provide operational visibility into the relay connection state, WebSocket lifecycle, and session health — useful for diagnosing connectivity issues and confirming that the encrypted channel is established.
 
 ## Access
-Right sidebar of the chat room, bottom panel labeled "Event Log".
+
+Right sidebar (or expandable panel) of the chat room. Panel labeled "Event Log". Present for both host and member roles.
 
 ## Usage Steps
-- No action required. The log updates automatically.
-- Scroll the log area manually to review past entries.
 
-## Options/Settings
-None.
+No action required. The log updates automatically as events occur. Scroll the log area to review past entries.
 
-## Result
-The log displays three types of entries:
-- **Connection events:** Timestamped entries showing "WS_CONNECT: [ESTABLISHED]" when the WebSocket connects or reconnects, and "ERR: WebSocket connection failed" on failure.
-- **Handshake status:** Shows "[HANDSHAKE_WAIT] - Listening..." when waiting for encrypted peer connection.
-- **Performance metrics:** Two readouts at the bottom — IO_LOAD (percent) and LATENCY (milliseconds).
+## Log Entry Types
+
+| Entry type | Example | When it appears |
+|---|---|---|
+| WS connection | `WS_CONNECT: [ESTABLISHED]` | WebSocket successfully opens |
+| WS failure | `ERR: WebSocket connection failed` | Connection attempt fails |
+| Reconnect | `WS_CONNECT: [RECONNECTING]` | Automatic reconnect attempt |
+| Handshake wait | `[HANDSHAKE_WAIT] - Listening...` | Noise Protocol handshake pending |
+| Performance metrics | `IO_LOAD: 2%  LATENCY: 14ms` | Updated periodically while connected |
 
 ## Notes/Limitations
-- The log is ephemeral. Entries are lost when leaving the session or reloading the page.
-- WebSocket reconnection attempts appear as repeated "WS_CONNECT" entries.
-- The log scrolls automatically on new entries but can be scrolled back manually.
+
+- The log is ephemeral. Entries are not persisted. Leaving the session or reloading the page clears the log.
+- WebSocket reconnection attempts appear as repeated `WS_CONNECT` entries. Multiple reconnects in quick succession may indicate a network issue.
+- The log scrolls automatically to new entries but can be scrolled back manually to review history.
+- `IO_LOAD` and `LATENCY` are estimates; `LATENCY` reflects the round-trip time for a WebSocket ping/pong.

@@ -1,21 +1,19 @@
 # Anti-Capture Mode (Removed)
 
 ## Status
-**Removed.** The anti-capture strobe was a CSS-only effect that flickered message text
-to "disrupt" cameras. It did not actually prevent screenshots, screen recording, or
-photography, so it was removed to avoid implying a protection that did not exist.
 
-## What remains
-The genuinely useful capture deterrents are still present and are not part of this toggle:
+**Removed.** The anti-capture strobe was a CSS `@keyframes` animation that flickered message text to "disrupt" screen capture. It did not prevent screenshots, screen recording, or photography. It was removed to avoid implying a protection that did not exist.
 
-- **Window-blur blackout:** while inside a chat room, a full-screen black overlay covers
-  the page whenever the browser window loses focus (tab switch, another window, or a
-  Meta/PrintScreen key event). This is always on in chat — there is no toggle.
-- **Message blur-to-reveal:** the **Blur** toggle (header bar on desktop, hamburger menu on
-  mobile) blurs message bubbles until you hover/touch them. This preference now persists
-  across reloads (`localStorage` key `qb-blur`).
+## What Remains
 
-## Migration notes
-- The "Anti-Capture" checkbox (desktop header and mobile Security Settings) has been removed.
+Two genuine capture deterrents are still present and are not configurable:
+
+**Window-blur blackout** — always active inside the chat room. A full-screen opaque overlay covers the entire page whenever the browser window loses focus: tab switch, alt-tab, another window coming to the foreground, or a Meta/PrintScreen key event. There is no toggle for this — it is always on in chat.
+
+**Message blur-to-reveal** — controlled by the "Blur" toggle (header bar on desktop, hamburger menu on mobile). When enabled, message bubbles are visually blurred until hovered or tapped. This preference persists across reloads via `localStorage` key `qb-blur`. See `usage/message-blurring.md`.
+
+## Migration Notes
+
+- The "Anti-Capture" checkbox has been removed from the desktop header and mobile Security Settings menu.
 - The `@keyframes strobe` animation has been removed from `src/index.css`.
-- `securityOptions` no longer carries an `antiCapture` field — it is now `{ blur: boolean }`.
+- `securityOptions` no longer carries an `antiCapture` field. The shape is now `{ blur: boolean }`.
