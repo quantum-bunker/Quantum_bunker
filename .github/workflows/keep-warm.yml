@@ -1,0 +1,42 @@
+# Free-tier keep-warm pinger — NOT production infrastructure.
+#
+# Render's free web service spins down after ~15 min with no inbound traffic,
+# adding a cold-start delay to the next request. This workflow runs on GitHub's
+# infrastructure (external to the sleeping container) and hits a cheap endpoint
+# on a loose ~10-15 min cadence so the instance stays warm.
+#
+# This is a deliberate, removable workaround. When the service moves to a paid
+# always-on instance, delete this file (or disable it in the Actions tab).
+#
+# Caveat: GitHub only fires `schedule` triggers from the workflow file on the
+# repository's DEFAULT branch, and disables scheduled workflows after 60 days
+# of repo inactivity. Scheduled runs can also be delayed under load.
+name: keep-warm
+
+on:
+  schedule:
+    # GitHub's cron floor is 5 min; base cadence is 10 min. Random jitter in the
+    # job (below) pushes the effective hit into a ~10-15 min window.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Random jitter (0-300s)
+        run: sleep $((RANDOM % 301))
+
+      - name: Ping health endpoint
+        run: |
+          curl --fail --silent --show-error --max-time 30 \
+            "https://quantum-bunker.onrender.com/api/health" \
+            && echo "keep-warm ping ok"
