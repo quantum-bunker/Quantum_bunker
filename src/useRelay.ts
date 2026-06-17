@@ -795,7 +795,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
         }
         // A frame may be a view over a larger buffer; slice the exact range once
         // and reuse the same ArrayBuffer for every peer.
-        const ab = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength);
+        const ab = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer;
         for (const id of others) {
           if (!p2pRef.current.sendBinaryDirect(id, ab)) throw new Error('SEND_FAILED');
         }
