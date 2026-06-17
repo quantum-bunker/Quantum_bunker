@@ -78,7 +78,6 @@ Quantum Bunker is designed with a **privacy-first, security-by-default** philoso
 | **Backend** | Node.js, Express 4, WebSocket (`ws`), TSX (runtime TypeScript) |
 | **Cryptography** | `@stablelib/x25519`, `@stablelib/ed25519`, `@stablelib/chacha20poly1305`, `@stablelib/hkdf`, `@stablelib/sha256`, `@stablelib/random` |
 | **Validation** | Zod 4 |
-| **AI Integration** | Google Gemini API (`@google/genai`) |
 | **Testing** | Vitest, Supertest, JSDOM, Vitest Coverage (V8) |
 | **Logging** | Winston |
 | **Security Headers** | Helmet |
@@ -90,7 +89,6 @@ Quantum Bunker is designed with a **privacy-first, security-by-default** philoso
 
 - **Node.js** v18 or later
 - **npm** (ships with Node.js)
-- A **Gemini API key** (for AI-powered features)
 
 ### Quick Start
 
@@ -102,14 +100,10 @@ cd Quantum_bunker
 # 2. Install dependencies
 npm install
 
-# 3. Configure environment
-cp .env.example .env.local
-# Edit .env.local and add: GEMINI_API_KEY=your_key_here
-
-# 4. Start the development server
+# 3. Start the development server
 npm run dev
 
-# 5. Open your browser to the localhost URL shown in the terminal
+# 4. Open your browser to the localhost URL shown in the terminal
 ```
 
 > 🧪 **Try it live:** [🚀 Open Dev Server](https://quantum-bunker.onrender.com/) — click for instant testing without local setup.

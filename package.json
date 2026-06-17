@@ -17,7 +17,6 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "@google/genai": "^2.8.0",
     "@noble/post-quantum": "^0.6.1",
     "@stablelib/chacha20poly1305": "^2.0.1",
     "@stablelib/ed25519": "^2.1.0",
