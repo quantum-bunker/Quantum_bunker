@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trash2, Sun, Moon, Menu, Palette } from 'lucide-react';
+import { Trash2, Sun, Moon, Menu, Palette, HelpCircle, X, BookOpen } from 'lucide-react';
 import { useSession } from './useSession';
 import { useMembership } from './useMembership';
 import { useContacts } from './useContacts';
 import { useIdentity } from './useIdentity';
 import { useTheme, THEME_FAMILIES } from './useTheme';
+import { useHealth } from './useHealth';
 import ChatRoom from './components/ChatRoom';
 import { HomeView } from './components/HomeView';
 import { ClassicHome } from './components/ClassicHome';
 import { JoinLinkModal } from './components/JoinLinkModal';
+import { HelpModal } from './components/HelpModal';
+import { Toast, ToastState } from './components/Toast';
 
 export default function App() {
   const { family, mode, setFamily, toggleMode } = useTheme();
@@ -28,6 +31,12 @@ export default function App() {
   const [createSessionName, setCreateSessionName] = useState('');
   const [advOpen, setAdvOpen] = useState(false);
   const [linkJoin, setLinkJoin] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [onboardDismissed, setOnboardDismissed] = useState(() => localStorage.getItem('qb-onboarded') === 'true');
+  const health = useHealth();
+
+  const dismissOnboarding = () => { localStorage.setItem('qb-onboarded', 'true'); setOnboardDismissed(true); };
 
   const {
     sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, savedSessions,
@@ -89,13 +98,13 @@ export default function App() {
   const handleCreate = async () => {
     setIsCreating(true);
     try { await initSession(createSessionName, membership.hostPublicKey); setView('chat'); }
-    catch { alert('Failed to create session'); }
+    catch { setToast({ kind: 'error', text: 'Could not create the vault — the relay may be unreachable. Try again.' }); }
     finally { setIsCreating(false); }
   };
 
   const handleJoin = async (id: string) => {
     try { localStorage.setItem('qb-join-msg', joinMsg || 'Hello'); await connectSession(id); setView('chat'); }
-    catch { alert('Vault not found or expired.'); }
+    catch { setToast({ kind: 'error', text: 'That vault was not found or has expired.' }); }
   };
 
   const reset = () => { resetSession(); setView('home'); };
@@ -149,12 +158,19 @@ export default function App() {
               )}
             </AnimatePresence>
           </div>
+          <button onClick={() => setHelpOpen(true)} className="p-1.5 sm:p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-500 dark:text-slate-400 transition-colors" title="Help & guide" aria-label="Open help and guide">
+            <HelpCircle size={16} className="sm:w-[18px] sm:h-[18px]" />
+          </button>
           <button onClick={toggleMode} className="p-1.5 sm:p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-500 dark:text-slate-400 transition-colors" title="Toggle light/dark">
             {mode === 'light' ? <Moon size={16} className="sm:w-[18px] sm:h-[18px]" /> : <Sun size={16} className="sm:w-[18px] sm:h-[18px]" />}
           </button>
-          <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="qb-label text-[10px] hidden lg:block">{family === 'classic' ? 'Connected' : 'Relay Node: AIS-DEFAULT'}</span>
+          <div className="flex items-center gap-2" title={health.online ? `Relay reachable${health.latencyMs != null ? ` · ${health.latencyMs} ms` : ''}` : 'Relay unreachable'}>
+            <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${health.online ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+            <span className="qb-label text-[10px] hidden lg:block">
+              {health.online
+                ? (family === 'classic' ? 'Connected' : `Relay: ONLINE${health.latencyMs != null ? ` · ${health.latencyMs}ms` : ''}`)
+                : (family === 'classic' ? 'Offline' : 'Relay: OFFLINE')}
+            </span>
           </div>
           {view === 'chat' && (
             <button onClick={handleDestroy} className="qb-btn px-2 sm:px-4 py-1.5 text-[10px] hover:!text-red-500 hover:!border-red-500/40 hover:!bg-red-500/10 flex items-center gap-2 qb-label">
@@ -190,6 +206,29 @@ export default function App() {
                 <input type="checkbox" checked={securityOptions.blur} onChange={(e) => setSecurityOptions(prev => ({...prev, blur: e.target.checked}))} className="accent-cyan-500 w-4 h-4 cursor-pointer" />
                 <span className="qb-text text-xs">Message Blurring</span>
               </label>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {view === 'home' && !onboardDismissed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="qb-surface border-b qb-border overflow-hidden shrink-0"
+          >
+            <div className="max-w-[1400px] mx-auto px-6 py-3 flex items-center gap-4">
+              <span className="qb-accent-text shrink-0 hidden sm:block"><BookOpen size={18} /></span>
+              <p className="qb-text text-[11px] flex-1 leading-relaxed" style={{ fontFamily: 'var(--qb-font)' }}>
+                <span className="font-bold">New here?</span> Create a vault, share its link, and chat — nothing is ever stored.
+                The full walkthrough (joining, whitelisting, verifying contacts, calls) is in the guide.
+              </p>
+              <button onClick={() => { setHelpOpen(true); }} className="qb-btn-accent text-[10px] font-bold px-4 py-2 shrink-0 flex items-center gap-1.5">
+                <BookOpen size={12} />Open guide
+              </button>
+              <button onClick={dismissOnboarding} className="text-slate-400 hover:text-slate-900 dark:hover:text-white shrink-0" aria-label="Dismiss onboarding">
+                <X size={16} />
+              </button>
             </div>
           </motion.div>
         )}
@@ -239,6 +278,7 @@ export default function App() {
                   identity={identity}
                   membership={membership}
                   contacts={contacts}
+                  health={health}
                 />
               )}
             </motion.div>
@@ -249,6 +289,10 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       {linkJoin && view === 'home' && (
         <JoinLinkModal
