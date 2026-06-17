@@ -20,6 +20,7 @@ function storageMock() {
     setItem: vi.fn((k: string, v: string) => { store[k] = v; }),
     removeItem: vi.fn((k: string) => { delete store[k]; }),
     clear: vi.fn(() => { store = {}; }),
+    key: vi.fn((_i: number): string | null => null),
     raw: () => store,
   };
 }

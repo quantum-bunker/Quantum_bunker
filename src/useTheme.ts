@@ -12,13 +12,31 @@ export const THEME_FAMILIES: { id: ThemeFamily; label: string; hint: string }[] 
 const FAMILY_KEY = 'qb-theme-id';
 const MODE_KEY = 'qb-theme';
 
+// Private-browsing modes and storage-disabled contexts throw on access, so all
+// reads/writes are guarded — theme is a preference, never worth crashing for.
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // storage unavailable — the in-memory state still drives the UI this session
+  }
+}
+
 function readFamily(): ThemeFamily {
-  const saved = localStorage.getItem(FAMILY_KEY);
+  const saved = readStorage(FAMILY_KEY);
   return saved === 'halo' || saved === 'classic' ? saved : 'geeky';
 }
 
 function readMode(): ThemeMode {
-  const saved = localStorage.getItem(MODE_KEY);
+  const saved = readStorage(MODE_KEY);
   return saved === 'light' ? 'light' : 'dark';
 }
 
@@ -30,13 +48,13 @@ export function useTheme() {
   const [mode, setModeState] = useState<ThemeMode>(readMode);
 
   useEffect(() => {
-    localStorage.setItem(FAMILY_KEY, family);
+    writeStorage(FAMILY_KEY, family);
     document.documentElement.dataset.theme = family;
     document.body.dataset.theme = family;
   }, [family]);
 
   useEffect(() => {
-    localStorage.setItem(MODE_KEY, mode);
+    writeStorage(MODE_KEY, mode);
     const isDark = mode === 'dark';
     document.documentElement.classList.toggle('dark', isDark);
     document.body.classList.toggle('dark', isDark);

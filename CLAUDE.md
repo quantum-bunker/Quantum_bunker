@@ -205,6 +205,7 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 | `MAX_BUFFERED_BYTES` | 24 MB (per-socket backpressure cutoff) |
 | `WS_MAX_FRAME_BYTES` | 16 MB + 64 KB |
 | `NONCE_CACHE_MAX` | 50,000 (server-side replay dedup) |
+| `MAX_ACTIVE_SESSIONS` | 10,000 global cap (env `MAX_ACTIVE_SESSIONS`) |
 | `SESSION_CREATE_PER_WINDOW` | 10/min per IP (env `REST_SESSION_CREATE_LIMIT`) |
 | `GENERAL_PER_WINDOW` | 120/min per IP (env `REST_GENERAL_LIMIT`) |
 

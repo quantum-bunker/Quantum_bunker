@@ -6,6 +6,11 @@ export const SESSION_LIMITS = {
   INACTIVITY_TTL_MS: 30 * 60 * 1000, // 30 minutes
   EMPTY_SESSION_TTL_MS: 5 * 60 * 1000, // 5 minutes
   MAX_PENDING_PEERS: 10,
+  // Hard ceiling on concurrently held sessions. Each session retains a Map entry,
+  // peer state, and cleanup bookkeeping in memory, so an unbounded create rate is
+  // a DoS vector. New creates are refused at capacity (the per-IP create rate
+  // limit is the first line of defence; this is the global backstop).
+  MAX_ACTIVE_SESSIONS: parseInt(process.env.MAX_ACTIVE_SESSIONS || '10000', 10),
 };
 
 export const RELAY_LIMITS = {
