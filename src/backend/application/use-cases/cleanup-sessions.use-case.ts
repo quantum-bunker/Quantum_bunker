@@ -7,13 +7,13 @@ export class CleanupSessions {
     private readonly eventBus: IEventBus
   ) {}
 
-  async execute(): Promise<void> {
+  async execute(): Promise<string[]> {
     const now = Date.now();
     const deletedSessions = await this.store.cleanup();
-    
+
     for (const sess of deletedSessions) {
       const reason = sess.expiresAt < now ? 'TTL_EXPIRED' : 'INACTIVITY_TIMEOUT';
-      
+
       this.eventBus.emit({
         type: 'SessionExpired',
         sessionId: sess.id,
@@ -21,5 +21,7 @@ export class CleanupSessions {
         payload: { reason, lastActivityAt: sess.lastActivityAt },
       });
     }
+
+    return deletedSessions.map(sess => sess.id);
   }
 }

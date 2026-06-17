@@ -171,3 +171,24 @@ describe('InMemorySessionStore.cleanup', () => {
     expect(deleted).toEqual([]);
   });
 });
+
+describe('InMemorySessionStore.count', () => {
+  let store: InMemorySessionStore;
+
+  beforeEach(() => {
+    store = new InMemorySessionStore();
+  });
+
+  it('reports the number of held sessions', async () => {
+    expect(await store.count()).toBe(0);
+    await store.save(makeSession({ id: 'a' }));
+    await store.save(makeSession({ id: 'b' }));
+    expect(await store.count()).toBe(2);
+  });
+
+  it('decreases when a session is deleted', async () => {
+    await store.save(makeSession({ id: 'a' }));
+    await store.delete('a');
+    expect(await store.count()).toBe(0);
+  });
+});

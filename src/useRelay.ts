@@ -1,17 +1,35 @@
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { RelayEnvelope, EnvelopeType } from './shared/contracts/v1/envelope';
 import { PeerChannels, NoiseFrame } from './crypto/peer-channels';
-import { WebRTCMesh, RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
+import { KeyPair } from './crypto/noise-xx';
+import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
+import { CallSignal } from './transport/call-connection';
+import { useP2P } from './useP2P';
+import { useCall } from './useCall';
+import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
 import { randomId } from './random';
-import { buildJoinCredentials } from './membership-store';
+import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
+import { loadContacts, upsertContact } from './contacts-store';
 import {
   FileAttachment,
   encodeFileAttachment,
   decodeFileAttachment,
   isWithinFileLimit,
+  isWithinP2PFileLimit,
 } from './file-transfer';
-import { encryptFileData, FileCipher } from './file-crypto';
-import { toBase64 } from './crypto/noise-primitives';
+import {
+  createFileStream,
+  blobSource,
+  bytesSource,
+  ChunkSource,
+  decodeFileStreamInit,
+  frameFileId,
+  FileStreamReceiver,
+} from './crypto/file-stream';
+import { encryptFileData, FileCipher, FileLock } from './file-crypto';
+import { toBase64, fromBase64 } from './crypto/noise-primitives';
+import { MessageOutbox, WILDCARD_RECIPIENT } from './outbox-store';
+import { PeerMailbox } from './peer-mailbox';
 
 export interface SendFileOptions {
   password?: string;
@@ -26,9 +44,12 @@ export interface LocalMessage extends RelayEnvelope {
   deleted?: boolean;
   file?: FileAttachment;
   locked?: boolean; // sender-side flag: this file was sent password-protected
+  progress?: number; // 0..1 while a streamed file is in flight
+  fileUrl?: string; // object URL for a streamed file (sender echo or completed receive)
+  fileError?: string; // set when a streamed transfer is rejected or interrupted
 }
 
-export function useRelay(sessionId: string | null, peerId: string | null) {
+export function useRelay(sessionId: string | null, peerId: string | null, identity?: KeyPair | null) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isPending, setIsPending] = useState(false);
@@ -44,10 +65,31 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
   const [safetyNumbers, setSafetyNumbers] = useState<Record<string, string>>({});
   const [fingerprints, setFingerprints] = useState<Record<string, string>>({});
   const [ownFingerprint, setOwnFingerprint] = useState<string | null>(null);
-  const [p2pPeers, setP2pPeers] = useState<string[]>([]);
+  // Whitelist (client-side mutual trust). peerMemberKeys maps a present peerId to
+  // its broadcast membership public key + label; peerPinned holds each peer's
+  // announced "peers I have pinned" set. A pair is mutually whitelisted iff each
+  // has pinned the other. All of this rides opaque SIGNALING frames — the relay
+  // never sees it.
+  const [peerMemberKeys, setPeerMemberKeys] = useState<Record<string, { pk: string; label: string }>>({});
+  const [peerPinned, setPeerPinned] = useState<Record<string, string[]>>({});
+  const [myPinned, setMyPinned] = useState<string[]>([]);
+  const [whitelistRequests, setWhitelistRequests] = useState<{ peerId: string; label: string; pk: string }[]>([]);
+  const [contactsTick, setContactsTick] = useState(0);
+  const memberIdRef = useRef(loadIdentity(MEMBER_KEY));
+  const peerMemberKeysRef = useRef<Record<string, { pk: string; label: string }>>({});
+  peerMemberKeysRef.current = peerMemberKeys;
   const socketRef = useRef<WebSocket | null>(null);
   const channelsRef = useRef<PeerChannels | null>(null);
-  const meshRef = useRef<WebRTCMesh | null>(null);
+  // Latest resolved static identity (null = burner). Read at connect time so an
+  // identity unlocked before joining is used without re-triggering connect.
+  const identityRef = useRef<KeyPair | null>(identity ?? null);
+  identityRef.current = identity ?? null;
+  const outboxRef = useRef<MessageOutbox | null>(null);
+  const flushingRef = useRef<boolean>(false);
+  const mailboxRef = useRef<PeerMailbox>(new PeerMailbox());
+  const handleEnvelopeRef = useRef<((env: RelayEnvelope) => void) | null>(null);
+  const handleBinaryRef = useRef<((fromPeerId: string, data: ArrayBuffer) => void) | null>(null);
+  const streamRecvRef = useRef<Map<string, { receiver: FileStreamReceiver; from: string; nonce: string; sessionId: string; enc?: FileLock }>>(new Map());
   const activePeersRef = useRef<string[]>([]);
   const readSentRef = useRef<Set<string>>(new Set());
   const pingTimestampRef = useRef<Map<string, number>>(new Map());
@@ -94,20 +136,127 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     });
   }, [sessionId, peerId, sendRaw]);
 
+  const p2p = useP2P({
+    selfId: peerId,
+    sendSignal: useCallback((frame: RtcFrame) => sendSignal({ ...frame }), [sendSignal]),
+    onData: useCallback((_from: string, data: string) => {
+      try {
+        handleEnvelopeRef.current?.(JSON.parse(data) as RelayEnvelope);
+      } catch {
+        // Ignore malformed data-channel frames.
+      }
+    }, []),
+    onBinary: useCallback((from: string, data: ArrayBuffer) => {
+      handleBinaryRef.current?.(from, data);
+    }, []),
+  });
+
+  // useP2P returns a fresh object every render; its methods are stable
+  // useCallbacks. Reach the mesh through a ref so the WS connection lifecycle
+  // and dispatch callbacks don't churn (and tear down the socket) on every
+  // re-render — they only ever call the latest p2p methods.
+  const p2pRef = useRef(p2p);
+  p2pRef.current = p2p;
+
+  // Video calling is offered only when the session is exactly 1-on-1 (one other
+  // peer, not group mode). The eligible peer drives useCall; null disables it.
+  const callablePeers = activePeers.filter(id => id !== peerId);
+  const callEligiblePeer = !isGroup && callablePeers.length === 1 ? callablePeers[0] : null;
+
+  const sendCallSignal = useCallback((to: string, signal: Omit<CallSignal, 'kind' | 'to'>) => {
+    sendSignal({ kind: 'call', to, ...signal });
+  }, [sendSignal]);
+
+  const call = useCall({ selfId: peerId, peerId: callEligiblePeer, sendCallSignal });
+  const callRef = useRef(call);
+  callRef.current = call;
+
   // Routes an envelope over the direct mesh when every peer has an open data
   // channel; otherwise over the WS relay. All-or-nothing per message keeps the
   // server out of the loop entirely once P2P is established, without risking
-  // duplicate delivery in mixed mode.
+  // duplicate delivery in mixed mode. Used for text/receipts/edits where relay
+  // is an acceptable fallback — large media uses dispatchDirect instead.
   const dispatch = useCallback((env: RelayEnvelope) => {
-    const mesh = meshRef.current;
     const others = activePeersRef.current.filter(id => id !== peerId);
-    if (mesh && shouldUseP2P(others, id => mesh.isConnected(id))) {
+    if (shouldUseP2P(others, id => p2pRef.current.isConnected(id))) {
       const data = JSON.stringify(env);
-      for (const id of others) mesh.send(id, data);
+      for (const id of others) p2pRef.current.sendDirect(id, data);
     } else {
       sendRaw(env);
     }
   }, [peerId, sendRaw]);
+
+  // Relays a non-interactive frame (receipt/edit/delete) after a small random
+  // delay to blunt timing correlation against the message it refers to. Kept
+  // tiny (mirrors PADDING.TIMING_JITTER_MAX_MS in constants.ts) so it is not
+  // felt in the UI; interactive sends never go through here.
+  const dispatchJittered = useCallback((env: RelayEnvelope) => {
+    const delay = Math.random() * 120;
+    setTimeout(() => dispatch(env), delay);
+  }, [dispatch]);
+
+  // Routes an envelope EXCLUSIVELY over the direct mesh. Returns false (sending
+  // nothing) when any peer lacks an open channel — the caller surfaces an error
+  // rather than relaying. This is the no-fallback path for large media so its
+  // bytes never reach the blind relay.
+  const dispatchDirect = useCallback((env: RelayEnvelope): boolean => {
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    if (!p2pRef.current.allConnected(others)) return false;
+    const data = JSON.stringify(env);
+    let ok = true;
+    for (const id of others) {
+      if (!p2pRef.current.sendDirect(id, data)) ok = false;
+    }
+    return ok;
+  }, [peerId]);
+
+  // Encrypted-at-rest outbox for messages composed while no peer is online. The
+  // at-rest key is derived from this device's per-session Noise identity secret;
+  // it never leaves the device and the server stores nothing.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    const secret = sessionStorage.getItem(`qb-noise-id-${sessionId}`) ?? sessionId;
+    MessageOutbox.open(sessionId, secret).then(box => {
+      if (!cancelled) outboxRef.current = box;
+    }).catch(() => {});
+    return () => { cancelled = true; outboxRef.current = null; };
+  }, [sessionId]);
+
+  // Re-sends a queued entry over the live transport, preserving its ORIGINAL
+  // nonce so the recipient dedups correctly. Returns false when no peer path is
+  // up, which aborts the drain and keeps the queue intact for the next attempt.
+  const sendQueued = useCallback((entry: { nonce: string; type: EnvelopeType; plaintext: string; timestamp: number }): boolean => {
+    if (!sessionId || !peerId) return false;
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    if (others.length === 0) return false;
+    const mgr = channelsRef.current;
+    if (!mgr || !mgr.allReady(activePeersRef.current)) return false;
+    const wirePayload =
+      entry.type === EnvelopeType.NOISE_MESSAGE
+        ? JSON.stringify(mgr.encryptForAll(entry.plaintext))
+        : entry.plaintext;
+    dispatch({
+      sessionId,
+      from: peerId,
+      type: entry.type,
+      timestamp: entry.timestamp,
+      nonce: entry.nonce,
+      payload: wirePayload,
+    });
+    return true;
+  }, [sessionId, peerId, dispatch]);
+
+  const flushOutbox = useCallback(async () => {
+    const box = outboxRef.current;
+    if (!box || flushingRef.current) return;
+    flushingRef.current = true;
+    try {
+      await box.drain(entry => sendQueued(entry));
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [sendQueued]);
 
   const connect = useCallback(() => {
     if (!sessionId || !peerId) return;
@@ -120,6 +269,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       sessionId,
       selfId: peerId,
       sendNoise: (to: string, frame: NoiseFrame) => sendSignal({ ...frame }),
+      identity: identityRef.current ?? undefined,
     });
     setOwnFingerprint(channelsRef.current.ownFingerprint());
 
@@ -130,10 +280,6 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       setFingerprints(mgr.fingerprints());
       setSecured(mgr.allReady(activePeersRef.current));
       if (ownFingerprint === null) setOwnFingerprint(mgr.ownFingerprint());
-    };
-
-    const refreshTransport = () => {
-      setP2pPeers(meshRef.current?.connectedPeers() ?? []);
     };
 
     // Transport-agnostic: invoked for envelopes arriving over the WS relay AND
@@ -149,6 +295,10 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       }
 
       if (env.type === EnvelopeType.ACK) {
+        // Delivery confirmed: drop any queued copy so it is never re-sent. The
+        // recipient's nonce dedup would discard a duplicate anyway, making the
+        // whole queue→flush→ack path exactly-once.
+        void outboxRef.current?.markDelivered(env.payload);
         setMessages(prev => prev.map(m => {
           if (m.nonce === env.payload) {
             const deliveredTo = Array.from(new Set([...m.deliveredTo, env.from]));
@@ -215,8 +365,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
             channelsRef.current?.onSignal(env.from, sig as NoiseFrame);
             refreshCrypto();
           } else if (sig.kind === 'rtc') {
-            void meshRef.current?.onSignal(env.from, sig as RtcFrame);
-            refreshTransport();
+            p2pRef.current.handleSignal(env.from, sig as RtcFrame);
+          } else if (sig.kind === 'call') {
+            callRef.current.handleSignal(env.from, sig as CallSignal);
           } else if (sig.kind === 'typing') {
             setTypingAt(prev => {
               if (sig.state) return { ...prev, [env.from]: Date.now() };
@@ -226,6 +377,25 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
           } else if (sig.kind === 'alias' && typeof sig.alias === 'string' && sig.alias.trim()) {
             const alias = sig.alias.trim().slice(0, 32);
             setPeerAliases(prev => (prev[env.from] === alias ? prev : { ...prev, [env.from]: alias }));
+          } else if (sig.kind === 'wl-id' && typeof sig.memberPublicKey === 'string' && sig.memberPublicKey) {
+            const pk = sig.memberPublicKey;
+            const label = typeof sig.label === 'string' ? sig.label.slice(0, 32) : '';
+            setPeerMemberKeys(prev => (prev[env.from]?.pk === pk && prev[env.from]?.label === label ? prev : { ...prev, [env.from]: { pk, label } }));
+          } else if (sig.kind === 'wl-state' && Array.isArray(sig.pinned)) {
+            const pinned = (sig.pinned as unknown[]).filter((x): x is string => typeof x === 'string');
+            setPeerPinned(prev => ({ ...prev, [env.from]: pinned }));
+          } else if (sig.kind === 'whitelist' && sig.to === peerId) {
+            const pk = typeof sig.memberPublicKey === 'string' ? sig.memberPublicKey : '';
+            const label = typeof sig.label === 'string' ? sig.label.slice(0, 32) : '';
+            if (sig.action === 'request' && pk) {
+              setWhitelistRequests(prev => prev.some(r => r.peerId === env.from) ? prev : [...prev, { peerId: env.from, label, pk }]);
+            } else if (sig.action === 'accept' && pk) {
+              // They pinned us; mirror by pinning them so the pair is mutual.
+              upsertContact(pk, label);
+              setContactsTick(t => t + 1);
+            } else if (sig.action === 'decline') {
+              setWhitelistRequests(prev => prev.filter(r => r.peerId !== env.from));
+            }
           }
         } catch {
           // Ignore malformed signaling frames
@@ -233,8 +403,17 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         return;
       }
 
+      // Tier-2 mailbox: hold a copy for any addressed peer who is currently
+      // absent, to forward on their return. The blob stays sealed for the final
+      // recipient — we are only a carrier (see peer-mailbox.ts).
+      if (env.type === EnvelopeType.NOISE_MESSAGE) {
+        mailboxRef.current.hold(env, new Set(activePeersRef.current));
+      }
+
       // File attachments are encrypted exactly like NOISE_MESSAGE; the cleartext
-      // is a JSON-encoded FileAttachment that never reaches the relay.
+      // is a JSON-encoded FileAttachment (single-shot) or a FileStreamInit whose
+      // bulk chunks follow as raw binary over the data channel. Neither reaches
+      // the relay.
       if (env.type === EnvelopeType.FILE) {
         const mgr = channelsRef.current;
         let decoded: string | null = null;
@@ -244,6 +423,28 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
           decoded = null;
         }
         if (decoded === null) return;
+
+        // A streamed transfer opens with a FileStreamInit carrying the per-file
+        // key; register a receiver and show a 0% placeholder. The bytes arrive
+        // out-of-band as binary frames, so we never mailbox-hold a useless init.
+        const init = decodeFileStreamInit(decoded);
+        if (init) {
+          const nonce = env.nonce;
+          if (!streamRecvRef.current.has(init.fileId)) {
+            const receiver = new FileStreamReceiver(init, (rcv, total) => {
+              const ratio = total > 0 ? rcv / total : 0;
+              setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: ratio } : m)));
+            });
+            streamRecvRef.current.set(init.fileId, { receiver, from: env.from, nonce, sessionId: env.sessionId, enc: init.enc });
+            setMessages(prev => {
+              if (prev.some(m => m.nonce === nonce)) return prev;
+              return [...prev, { ...env, payload: '', file: { name: init.name, mime: init.mime, size: init.size, data: '' }, locked: !!init.enc, progress: 0, status: 'delivered', deliveredTo: [], seenBy: [] }];
+            });
+          }
+          return;
+        }
+
+        mailboxRef.current.hold(env, new Set(activePeersRef.current));
         const att = decodeFileAttachment(decoded);
         if (!att) return;
 
@@ -252,7 +453,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
           return [...prev, { ...env, payload: '', file: att, status: 'delivered', deliveredTo: [], seenBy: [] }];
         });
 
-        dispatch({
+        dispatchJittered({
           sessionId: env.sessionId,
           from: peerId,
           type: EnvelopeType.ACK,
@@ -282,7 +483,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         });
 
         // Auto-reply with ACK over whichever transport is active.
-        dispatch({
+        dispatchJittered({
           sessionId: env.sessionId,
           from: peerId,
           type: EnvelopeType.ACK,
@@ -293,18 +494,61 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       }
     };
 
-    meshRef.current = new WebRTCMesh({
-      selfId: peerId,
-      sendRtc: (to: string, frame: RtcFrame) => sendSignal({ ...frame }),
-      onMessage: (_from: string, data: string) => {
-        try {
-          handleEnvelope(JSON.parse(data) as RelayEnvelope);
-        } catch {
-          // Ignore malformed data-channel frames.
+    handleEnvelopeRef.current = handleEnvelope;
+
+    // Raw binary frames carry streamed file chunks. Route each to its registered
+    // receiver by the fileId in the frame header. A failed AEAD tag throws and
+    // rejects the entire transfer; a completed transfer resolves to a Blob whose
+    // object URL the UI renders, and we ACK the original init nonce.
+    const handleBinary = (fromPeerId: string, ab: ArrayBuffer) => {
+      const frame = new Uint8Array(ab);
+      const fileId = frameFileId(frame);
+      if (!fileId) return;
+      const entry = streamRecvRef.current.get(fileId);
+      if (!entry || entry.from !== fromPeerId) return;
+
+      try {
+        entry.receiver.acceptFrame(frame);
+      } catch {
+        streamRecvRef.current.delete(fileId);
+        setMessages(prev => prev.map(m =>
+          m.nonce === entry.nonce
+            ? { ...m, fileError: 'Transfer rejected — a chunk failed authentication', progress: undefined }
+            : m));
+        return;
+      }
+
+      if (entry.receiver.isDone) {
+        streamRecvRef.current.delete(fileId);
+        if (entry.enc) {
+          // The reassembled bytes are still password-encrypted; expose them as a
+          // locked attachment so the existing LockedAttachment UI can unlock via
+          // decryptFileData. No object URL — that would render unlocked content.
+          const ciphertext = entry.receiver.resultBytes();
+          const lock = entry.enc;
+          setMessages(prev => prev.map(m =>
+            m.nonce === entry.nonce && m.file
+              ? { ...m, file: { ...m.file, data: toBase64(ciphertext), enc: lock }, progress: 1, status: 'delivered' }
+              : m));
+        } else {
+          const url = URL.createObjectURL(entry.receiver.result());
+          setMessages(prev => prev.map(m =>
+            m.nonce === entry.nonce ? { ...m, fileUrl: url, progress: 1, status: 'delivered' } : m));
         }
-      },
-      onStateChange: refreshTransport,
-    });
+        if (peerId) {
+          dispatchJittered({
+            sessionId: entry.sessionId,
+            from: peerId,
+            type: EnvelopeType.ACK,
+            timestamp: Date.now(),
+            nonce: randomId(),
+            payload: entry.nonce,
+          });
+        }
+      }
+    };
+
+    handleBinaryRef.current = handleBinary;
 
     socket.onopen = () => {
       console.log('WS Connected');
@@ -357,19 +601,21 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
         setActivePeers(next);
         setIsGroup(!!data.isGroup);
         const mgr = channelsRef.current;
-        const mesh = meshRef.current;
         for (const id of next) {
           if (id === peerId) continue;
           mgr?.ensureChannel(id);
-          mesh?.ensurePeer(id);
+          p2pRef.current.ensurePeer(id);
+          // A returning peer: replay any envelopes we are carrying for it.
+          if (!prev.includes(id)) {
+            for (const held of mailboxRef.current.release(id)) dispatch(held);
+          }
         }
         for (const id of prev) {
           if (next.includes(id)) continue;
           mgr?.removePeer(id);
-          mesh?.removePeer(id);
+          p2pRef.current.removePeer(id);
         }
         refreshCrypto();
-        refreshTransport();
         return;
       }
 
@@ -401,10 +647,26 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     };
 
     socketRef.current = socket;
-  }, [sessionId, peerId, sendRaw, sendSignal, dispatch]);
+  }, [sessionId, peerId, sendRaw, sendSignal, dispatch, dispatchJittered]);
 
   const sendMessage = useCallback((payload: string, type: EnvelopeType = EnvelopeType.NOISE_MESSAGE) => {
-    if (!socketRef.current || !isConnected || !sessionId || !peerId || activePeers.length <= 1) return;
+    if (!sessionId || !peerId) return;
+
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    const ready = !!channelsRef.current && channelsRef.current.allReady(activePeersRef.current);
+
+    // No online, secured recipient: queue the cleartext (sealed at rest) for a
+    // trusted contact who is offline. It flushes on their reconnect, keeping
+    // this same nonce — the server never sees or stores it.
+    if (others.length === 0 || !ready) {
+      const nonce = randomId();
+      void outboxRef.current?.enqueue({ nonce, to: WILDCARD_RECIPIENT, type, plaintext: payload, timestamp: Date.now() });
+      setMessages(prev => [...prev, {
+        sessionId, from: peerId, type, timestamp: Date.now(), nonce,
+        payload, status: 'sending', deliveredTo: [], seenBy: [],
+      }]);
+      return;
+    }
 
     const wirePayload =
       type === EnvelopeType.NOISE_MESSAGE && channelsRef.current
@@ -460,7 +722,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     if (!sessionId || !peerId || readSentRef.current.has(nonce)) return;
     readSentRef.current.add(nonce);
 
-    dispatch({
+    dispatchJittered({
       sessionId,
       from: peerId,
       type: EnvelopeType.READ,
@@ -468,7 +730,86 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       nonce: randomId(),
       payload: nonce,
     });
-  }, [sessionId, peerId, dispatch]);
+  }, [sessionId, peerId, dispatchJittered]);
+
+  // Streams a file over the direct mesh in AEAD-sealed chunks: a FileStreamInit
+  // (carrying the per-file key) goes through the ratchet first, then the bulk
+  // chunks follow as raw ArrayBuffers — never base64, never the relay. Sender
+  // memory stays bounded: chunks are sliced from the File on demand and never
+  // held all at once.
+  const sendFileStream = useCallback(async (
+    file: File,
+    opts: SendFileOptions = {},
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const mgr = channelsRef.current;
+    if (!mgr || !sessionId || !peerId) return { ok: false, error: 'Secure channel not ready' };
+    if (!isWithinP2PFileLimit(file.size)) return { ok: false, error: 'File exceeds size limit' };
+    const others = activePeersRef.current.filter(id => id !== peerId);
+    if (!p2pRef.current.allConnected(others)) {
+      return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
+    }
+
+    const name = file.name || 'file';
+    const mime = file.type || 'application/octet-stream';
+
+    // Approach (a): a password-locked large file is password-encrypted whole
+    // into a single ciphertext, then the ciphertext bytes are streamed. The
+    // receiver reassembles the ciphertext and unlocks it through the existing
+    // single-shot decryptFileData (LockedAttachment UI) — no per-chunk password
+    // layer, no ChatRoom changes. The whole file is read into memory once here.
+    let source: ChunkSource;
+    let enc: FileLock | undefined;
+    if (opts.password) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const sealed = await encryptFileData(bytes, opts.password, opts.algo ?? 'AES-GCM');
+      source = bytesSource(fromBase64(sealed.data));
+      enc = sealed.lock;
+    } else {
+      source = blobSource(file);
+    }
+
+    const { init, frames } = createFileStream(source, { name, mime, size: file.size, enc });
+    const nonce = randomId();
+    const initEnvelope: RelayEnvelope = {
+      sessionId, from: peerId, type: EnvelopeType.FILE, timestamp: Date.now(), nonce,
+      payload: JSON.stringify(mgr.encryptForAll(JSON.stringify(init))),
+    };
+    if (!dispatchDirect(initEnvelope)) {
+      return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
+    }
+
+    // The sender always sees their own file via the original File object URL,
+    // even when it was password-locked for recipients.
+    const url = URL.createObjectURL(file);
+    setMessages(prev => [...prev, {
+      ...initEnvelope, payload: '', file: { name: init.name, mime: init.mime, size: file.size, data: '' },
+      fileUrl: url, locked: !!enc, progress: 0, status: 'sent', deliveredTo: [], seenBy: [],
+    }]);
+
+    try {
+      let done = 0;
+      for await (const frame of frames()) {
+        if (!p2pRef.current.allConnected(others)) throw new Error('PEER_LEFT');
+        while (others.some(id => p2pRef.current.bufferedAmount(id) > P2P_STREAM_HIGH_WATER_BYTES)) {
+          await new Promise(resolve => setTimeout(resolve, 15));
+        }
+        // A frame may be a view over a larger buffer; slice the exact range once
+        // and reuse the same ArrayBuffer for every peer.
+        const ab = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength);
+        for (const id of others) {
+          if (!p2pRef.current.sendBinaryDirect(id, ab)) throw new Error('SEND_FAILED');
+        }
+        done += 1;
+        const ratio = init.chunks > 0 ? done / init.chunks : 1;
+        setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: ratio } : m)));
+      }
+      setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: 1 } : m)));
+      return { ok: true };
+    } catch {
+      setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, fileError: 'Direct transfer interrupted' } : m)));
+      return { ok: false, error: 'Direct transfer interrupted' };
+    }
+  }, [sessionId, peerId, dispatchDirect]);
 
   const sendFile = useCallback(async (
     file: File,
@@ -477,7 +818,12 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     if (!isConnected || !sessionId || !peerId || activePeers.length <= 1) {
       return { ok: false, error: 'No peers connected' };
     }
-    if (!isWithinFileLimit(file.size)) {
+    // Large media streams over the direct mesh in chunks (higher cap, bounded
+    // transport memory); everything else takes the single-envelope path.
+    // Password-locked large files also stream — the ciphertext is what gets
+    // chunked (see sendFileStream / approach (a)).
+    const stream = requiresDirectPath(file.size);
+    if (!(stream ? isWithinP2PFileLimit(file.size) : isWithinFileLimit(file.size))) {
       return { ok: false, error: 'File exceeds size limit' };
     }
     // Never let a file leave unencrypted: require the E2E channel manager. The
@@ -486,6 +832,8 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     if (!channelsRef.current) {
       return { ok: false, error: 'Secure channel not ready' };
     }
+
+    if (stream) return sendFileStream(file, opts);
 
     const bytes = new Uint8Array(await file.arrayBuffer());
 
@@ -510,14 +858,26 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     const wirePayload = JSON.stringify(channelsRef.current.encryptForAll(inner));
     const nonce = randomId();
 
-    dispatch({
+    const envelope: RelayEnvelope = {
       sessionId,
       from: peerId,
       type: EnvelopeType.FILE,
       timestamp: Date.now(),
       nonce,
       payload: wirePayload,
-    });
+    };
+
+    // Media above the threshold MUST take the direct P2P path: its bytes never
+    // touch the blind relay. If no direct link is up we surface a visible error
+    // instead of falling back to the server — that fallback would defeat the
+    // whole point (server bandwidth + a relayed copy of the media).
+    if (requiresDirectPath(file.size)) {
+      if (!dispatchDirect(envelope)) {
+        return { ok: false, error: 'Direct link failed — media not sent. Wait for the direct P2P connection.' };
+      }
+    } else {
+      dispatch(envelope);
+    }
 
     // Local echo keeps the cleartext attachment so the sender always sees their
     // own file rendered, even when it was password-locked for the recipients.
@@ -528,7 +888,7 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }]);
 
     return { ok: true };
-  }, [isConnected, sessionId, peerId, activePeers.length, dispatch]);
+  }, [isConnected, sessionId, peerId, activePeers.length, dispatch, dispatchDirect, sendFileStream]);
 
   const editMessage = useCallback((targetNonce: string, newText: string) => {
     if (!sessionId || !peerId || !newText.trim()) return;
@@ -572,10 +932,14 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
     }
     return () => {
       socketRef.current?.close();
-      meshRef.current?.reset();
-      meshRef.current = null;
+      p2pRef.current.reset();
     };
   }, [sessionId, peerId, connect]);
+
+  // Flush the offline outbox once a secure channel to a returning peer is up.
+  useEffect(() => {
+    if (secured && activePeers.length > 1) void flushOutbox();
+  }, [secured, activePeers.length, flushOutbox]);
 
   // Periodic PING to measure round-trip latency
   useEffect(() => {
@@ -604,6 +968,53 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
       sendSignal({ kind: 'alias', alias: alias.slice(0, 32) });
     }
   }, [isConnected, activePeers.length, sendSignal]);
+
+  // Announce our membership public key so peers can map us to a pinnable identity
+  // for the whitelist (the chat's Noise key is a different keypair).
+  useEffect(() => {
+    if (!isConnected || activePeers.length <= 1) return;
+    const label = (localStorage.getItem('qb-join-msg') || '').trim().slice(0, 32);
+    sendSignal({ kind: 'wl-id', memberPublicKey: memberIdRef.current.publicKey, label });
+  }, [isConnected, activePeers.length, sendSignal]);
+
+  // Recompute which present peers we have pinned (mutual-trust candidates), then
+  // broadcast that set so every client can derive the mutual/whitelist-group view.
+  useEffect(() => {
+    const contacts = loadContacts();
+    const pinned = activePeers.filter(p => {
+      const pk = peerMemberKeys[p]?.pk;
+      return p !== peerId && pk && contacts.some(c => c.publicKey === pk);
+    });
+    setMyPinned(prev => (prev.length === pinned.length && prev.every(x => pinned.includes(x)) ? prev : pinned));
+  }, [activePeers, peerMemberKeys, peerId, contactsTick]);
+
+  useEffect(() => {
+    if (!isConnected || activePeers.length <= 1) return;
+    sendSignal({ kind: 'wl-state', pinned: myPinned });
+  }, [isConnected, activePeers.length, myPinned, sendSignal]);
+
+  const requestWhitelist = useCallback((targetPeerId: string) => {
+    const label = (localStorage.getItem('qb-join-msg') || '').trim().slice(0, 32);
+    sendSignal({ kind: 'whitelist', action: 'request', to: targetPeerId, memberPublicKey: memberIdRef.current.publicKey, label });
+  }, [sendSignal]);
+
+  const acceptWhitelist = useCallback((targetPeerId: string) => {
+    const req = whitelistRequests.find(r => r.peerId === targetPeerId);
+    const known = peerMemberKeysRef.current[targetPeerId];
+    const pk = req?.pk || known?.pk;
+    if (pk) {
+      upsertContact(pk, req?.label || known?.label || '');
+      setContactsTick(t => t + 1);
+    }
+    const label = (localStorage.getItem('qb-join-msg') || '').trim().slice(0, 32);
+    sendSignal({ kind: 'whitelist', action: 'accept', to: targetPeerId, memberPublicKey: memberIdRef.current.publicKey, label });
+    setWhitelistRequests(prev => prev.filter(r => r.peerId !== targetPeerId));
+  }, [whitelistRequests, sendSignal]);
+
+  const declineWhitelist = useCallback((targetPeerId: string) => {
+    sendSignal({ kind: 'whitelist', action: 'decline', to: targetPeerId });
+    setWhitelistRequests(prev => prev.filter(r => r.peerId !== targetPeerId));
+  }, [sendSignal]);
 
   // Expire typing indicators if no explicit "stop" frame arrives.
   useEffect(() => {
@@ -636,8 +1047,9 @@ export function useRelay(sessionId: string | null, peerId: string | null) {
 
   const typingPeers = Object.keys(typingAt).filter(id => id !== peerId);
   const otherPeers = activePeers.filter(id => id !== peerId);
+  const p2pPeers = p2p.connectedPeers;
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport };
+  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
 }
