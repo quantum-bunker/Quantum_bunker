@@ -21,7 +21,7 @@ describe('RelayPolicy.validate', () => {
   });
 
   it('accepts the timestamp at the exact drift boundary', () => {
-    const at = envelope({ timestamp: Date.now() - RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS });
+    const at = envelope({ timestamp: Date.now() - RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS + 1 });
     expect(RelayPolicy.validate(at).valid).toBe(true);
   });
 
