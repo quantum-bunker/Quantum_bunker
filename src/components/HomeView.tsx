@@ -22,7 +22,7 @@ export function HomeView({
   joinId, onJoinIdChange, joinMsg, onJoinMsgChange, onJoin,
   savedSessions, onDestroySession,
   advOpen, onToggleAdv,
-  identity, membership, contacts,
+  identity, membership, contacts, health,
 }: {
   createSessionName: string;
   onCreateSessionNameChange: (value: string) => void;
@@ -40,6 +40,7 @@ export function HomeView({
   identity: ReturnType<typeof useIdentity>;
   membership: ReturnType<typeof useMembership>;
   contacts: ReturnType<typeof useContacts>;
+  health: { online: boolean; latencyMs: number | null };
 }) {
   const hostSessions = savedSessions.filter(s => s.role === 'host');
   return (
@@ -53,9 +54,9 @@ export function HomeView({
           <p className="qb-muted text-sm sm:text-base italic" style={{ fontFamily: 'var(--qb-font)' }}>Stateless routing · Ephemeral handshakes · No logs, no storage, no traces.</p>
         </div>
         <div className="hidden md:flex flex-wrap items-center gap-x-6 gap-y-2 shrink-0">
-          <div className="flex items-center gap-2"><Activity size={14} className="qb-accent-text" /><span className="qb-label text-[10px]">Relay: ACTIVE</span></div>
+          <div className="flex items-center gap-2"><Activity size={14} className={health.online ? 'qb-accent-text' : 'text-red-500'} /><span className="qb-label text-[10px]">{health.online ? 'Relay: ONLINE' : 'Relay: OFFLINE'}</span></div>
           <div className="flex items-center gap-2"><ShieldCheck size={14} className="text-emerald-500" /><span className="qb-label text-[10px]">Noise_XX</span></div>
-          <div className="flex items-center gap-2"><Terminal size={14} className="text-amber-500" /><span className="qb-label text-[10px]">Uptime 99.998%</span></div>
+          <div className="flex items-center gap-2"><Terminal size={14} className="text-amber-500" /><span className="qb-label text-[10px]">{health.latencyMs != null ? `Ping ${health.latencyMs}ms` : 'Ping —'}</span></div>
         </div>
       </div>
 
@@ -167,8 +168,8 @@ export function HomeView({
       </div>
 
       <div className="qb-label flex flex-col md:flex-row justify-between items-center gap-4 pt-8 border-t qb-border text-[9px]">
-        <div className="flex gap-8"><span>STATUS: ALL_SYSTEMS_GO</span><span className="hidden sm:inline">LATENCY: OPTIMAL</span></div>
-        <div className="flex gap-8"><span>LOAD: 0.0012%</span><span className="qb-accent-text opacity-70">SECURE_TUNNEL_READY</span></div>
+        <div className="flex gap-8"><span>RELAY: {health.online ? 'REACHABLE' : 'UNREACHABLE'}</span><span className="hidden sm:inline">LATENCY: {health.latencyMs != null ? `${health.latencyMs}MS` : '—'}</span></div>
+        <div className="flex gap-8"><span>STORAGE: NONE</span><span className="qb-accent-text opacity-70">{health.online ? 'SECURE_TUNNEL_READY' : 'AWAITING_RELAY'}</span></div>
       </div>
     </div>
   );

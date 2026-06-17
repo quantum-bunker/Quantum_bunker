@@ -88,6 +88,28 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // Unread badge in the tab title: the chat blacks out on blur, so a flashed
+  // title is the only cue that a message arrived while you were looking away.
+  const baseTitleRef = useRef(document.title);
+  const seenCountRef = useRef(messages.length);
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    const fresh = messages.slice(seenCountRef.current);
+    seenCountRef.current = messages.length;
+    if (document.hasFocus()) { setUnread(0); return; }
+    const inbound = fresh.filter(m => m.from !== peerId).length;
+    if (inbound > 0) setUnread(u => u + inbound);
+  }, [messages, peerId]);
+  useEffect(() => {
+    document.title = unread > 0 ? `(${unread}) ${baseTitleRef.current}` : baseTitleRef.current;
+  }, [unread]);
+  useEffect(() => {
+    const clear = () => setUnread(0);
+    window.addEventListener('focus', clear);
+    const base = baseTitleRef.current;
+    return () => { window.removeEventListener('focus', clear); document.title = base; };
+  }, []);
+
   useEffect(() => { localStorage.setItem('qb-show-logs', showLogs ? 'true' : 'false'); }, [showLogs]);
 
   useEffect(() => {
