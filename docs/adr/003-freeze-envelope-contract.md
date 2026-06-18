@@ -32,7 +32,7 @@ When Phase 2 begins, use `@stablelib/noise` (maintained, TypeScript-native, audi
 
 ### 3. `nonce` and `timestamp` are validated in Phase 1
 
-Server validates presence and timestamp drift today. In Phase 2 these fields carry cryptographic meaning managed by the client.
+Server validates `nonce` presence and uniqueness (replay dedup) today. It does not reject on `timestamp` drift — clients are not time-synchronized. In Phase 2 these fields carry cryptographic meaning managed by the client.
 
 **Binding rule:** `shared/contracts/v1/envelope.ts` is frozen. Breaking changes (removing or renaming fields) require a new `shared/contracts/v2/` directory and a new ADR. Additive changes (new optional fields) require a comment and PR approval only.
 
