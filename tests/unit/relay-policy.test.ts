@@ -20,23 +20,14 @@ describe('RelayPolicy.validate', () => {
     expect(RelayPolicy.validate(envelope())).toEqual({ valid: true });
   });
 
-  it('accepts the timestamp at the exact drift boundary', () => {
-    const at = envelope({ timestamp: Date.now() - RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS + 1 });
-    expect(RelayPolicy.validate(at).valid).toBe(true);
+  it('accepts a timestamp drifted far into the past (unsynchronized client clock)', () => {
+    const stale = envelope({ timestamp: Date.now() - RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS * 10 });
+    expect(RelayPolicy.validate(stale).valid).toBe(true);
   });
 
-  it('rejects a timestamp drifted into the past beyond tolerance', () => {
-    const stale = envelope({ timestamp: Date.now() - RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS - 1 });
-    const result = RelayPolicy.validate(stale);
-    expect(result.valid).toBe(false);
-    expect(result.reason).toBe('Timestamp drift too large');
-  });
-
-  it('rejects a timestamp drifted into the future beyond tolerance', () => {
-    const future = envelope({ timestamp: Date.now() + RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS + 5_000 });
-    const result = RelayPolicy.validate(future);
-    expect(result.valid).toBe(false);
-    expect(result.reason).toBe('Timestamp drift too large');
+  it('accepts a timestamp drifted far into the future (unsynchronized client clock)', () => {
+    const future = envelope({ timestamp: Date.now() + RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS * 10 });
+    expect(RelayPolicy.validate(future).valid).toBe(true);
   });
 
   it('rejects an empty payload', () => {
@@ -57,11 +48,11 @@ describe('RelayPolicy.validate', () => {
     }
   });
 
-  it('checks drift before payload — a stale empty envelope reports drift first', () => {
+  it('rejects an empty payload regardless of clock drift', () => {
     const both = envelope({
       payload: '',
-      timestamp: Date.now() - RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS - 1,
+      timestamp: Date.now() - RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS * 10,
     });
-    expect(RelayPolicy.validate(both).reason).toBe('Timestamp drift too large');
+    expect(RelayPolicy.validate(both).reason).toBe('Payload empty');
   });
 });
