@@ -217,7 +217,14 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     const others = activePeersRef.current.filter(id => id !== peerId);
     if (shouldUseP2P(others, id => p2pRef.current.isConnected(id))) {
       const data = JSON.stringify(env);
-      for (const id of others) p2pRef.current.sendDirect(id, data);
+      // A data channel that reports "open" can still refuse a frame (closing,
+      // backpressure) or, across real NATs, appear connected while bytes never
+      // traverse. Text/receipt/edit frames may safely fall back to the relay —
+      // the recipient dedups by nonce, so a peer that already got the P2P copy
+      // ignores the relayed duplicate. Never silently drop a message: if any
+      // peer's direct send is unconfirmed, relay the whole envelope.
+      const allDelivered = others.every(id => p2pRef.current.sendDirect(id, data));
+      if (!allDelivered) sendRaw(env);
     } else {
       sendRaw(env);
     }
