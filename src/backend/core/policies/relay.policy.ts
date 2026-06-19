@@ -1,15 +1,15 @@
 import { RelayEnvelope, EnvelopeType } from '../../../shared/contracts/v1/envelope';
+import { RELAY_LIMITS } from '../constants';
 
 export class RelayPolicy {
   static validate(envelope: RelayEnvelope): { valid: boolean; reason?: string } {
-    // We deliberately do NOT reject on the difference between the client's
-    // timestamp and the server's clock. Clients are not time-synchronized — a
-    // device whose wall clock is even a minute off would otherwise have every
-    // envelope (including the Noise handshake signaling) silently rejected,
-    // while plaintext control frames like `join` still pass, making the vault
-    // appear to work for admission but never deliver a message. Replay is
-    // protected independently and server-relatively by nonce deduplication in
-    // RelayMessage.isReplay(), which does not depend on the client clock.
+    const now = Date.now();
+    const drift = Math.abs(now - envelope.timestamp);
+
+    if (drift > RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS) {
+      return { valid: false, reason: 'Timestamp drift too large' };
+    }
+
     if (!envelope.payload || envelope.payload.length === 0) {
       return { valid: false, reason: 'Payload empty' };
     }
