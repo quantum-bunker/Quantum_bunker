@@ -249,7 +249,7 @@ export class FileStreamReceiver {
     const plain = aead.open(nonce(parsed.index), parsed.ciphertext, chunkAd(parsed.header));
     if (plain === null) return this.fail();
 
-    this.parts.push(plain);
+    this.parts.push(plain as Uint8Array<ArrayBuffer>);
     this.next += 1;
     this.received += plain.length;
     this.onProgress?.(this.received, this.expectedBytes);

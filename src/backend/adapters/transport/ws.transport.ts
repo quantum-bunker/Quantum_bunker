@@ -94,9 +94,12 @@ export class WsTransport implements IRelayTransport {
   }
 
   private admitPeer(session: Session, peerId: string): string {
+    const wasAlreadyAdmitted = !!session.peers[peerId];
     const token = session.peers[peerId]?.token || newToken();
     session.peers[peerId] = { id: peerId, joinedAt: Date.now(), lastSeenAt: Date.now(), token };
-    session.participantCount = (session.participantCount || 0) + 1;
+    if (!wasAlreadyAdmitted) {
+      session.participantCount = (session.participantCount || 0) + 1;
+    }
     if (session.participantCount > 2) {
       session.isGroup = true;
     }
@@ -255,7 +258,18 @@ export class WsTransport implements IRelayTransport {
           }
 
           session.pendingPeers = session.pendingPeers || {};
-          if (!session.pendingPeers[peerId] && Object.keys(session.pendingPeers).length >= SESSION_LIMITS.MAX_PENDING_PEERS) {
+
+          // Already pending: re-bind the socket without sending a duplicate
+          // join_request to the host or replacing the pending entry.
+          if (session.pendingPeers[peerId]) {
+            currentPeerId = peerId;
+            currentSessionId = sessionId;
+            this.connections.set(connKey, ws);
+            ws.send(JSON.stringify({ type: 'pending', message: 'Waiting for host approval...' }));
+            return;
+          }
+
+          if (Object.keys(session.pendingPeers).length >= SESSION_LIMITS.MAX_PENDING_PEERS) {
             ws.send(JSON.stringify({ type: 'error', message: 'Too many pending join requests' }));
             return;
           }

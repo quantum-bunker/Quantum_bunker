@@ -52,6 +52,20 @@ export default function App() {
   }, [securityOptions.blur]);
 
   useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === '?' || e.key === 'F1')) {
+        e.preventDefault();
+        setHelpOpen(true);
+      }
+      if (e.key === 'Escape') setHelpOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
     const handleFocus = () => setIsFocused(true);
     const handleBlur = () => setIsFocused(false);
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -97,7 +111,7 @@ export default function App() {
 
   const handleCreate = async () => {
     setIsCreating(true);
-    try { await initSession(createSessionName, membership.hostPublicKey); setView('chat'); }
+    try { await initSession(createSessionName, membership.hostPublicKey); setView('chat'); setToast({ kind: 'success', text: 'Vault created — share its link to invite someone.' }); }
     catch { setToast({ kind: 'error', text: 'Could not create the vault — the relay may be unreachable. Try again.' }); }
     finally { setIsCreating(false); }
   };
@@ -108,7 +122,7 @@ export default function App() {
   };
 
   const reset = () => { resetSession(); setView('home'); };
-  const handleDestroy = () => { destroySession(); setView('home'); };
+  const handleDestroy = () => { destroySession(); setView('home'); setToast({ kind: 'success', text: 'Vault destroyed — everything was wiped.' }); };
 
   return (
     <div className={`qb-app h-screen w-full ${mode === 'dark' ? 'dark' : ''} selection:bg-cyan-500/30 flex flex-col overflow-hidden`}>
@@ -158,7 +172,7 @@ export default function App() {
               )}
             </AnimatePresence>
           </div>
-          <button onClick={() => setHelpOpen(true)} className="p-1.5 sm:p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-500 dark:text-slate-400 transition-colors" title="Help & guide" aria-label="Open help and guide">
+          <button onClick={() => setHelpOpen(true)} className="p-1.5 sm:p-2 rounded-lg qb-accent-text hover:qb-accent-soft-bg ring-1 qb-accent-border transition-colors" title="Help & guide — press ? anytime" aria-label="Open help and guide">
             <HelpCircle size={16} className="sm:w-[18px] sm:h-[18px]" />
           </button>
           <button onClick={toggleMode} className="p-1.5 sm:p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-500 dark:text-slate-400 transition-colors" title="Toggle light/dark">

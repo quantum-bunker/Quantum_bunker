@@ -63,13 +63,14 @@ describe('HTTP API Integration Tests', () => {
     expect(getRes.body.pendingPeers).toBeUndefined();
   });
 
-  it('should refuse to refresh a session with no active participants', async () => {
+  it('should allow refresh of a session with the host admitted', async () => {
     const createRes = await request(app)
       .post('/api/sessions')
       .send({ name: 'Refresh Vault', expiresInSeconds: 600 });
 
     const refreshRes = await request(app).post(`/api/sessions/${createRes.body.sessionId}/refresh`);
-    expect(refreshRes.status).toBe(409);
+    expect(refreshRes.status).toBe(200);
+    expect(refreshRes.body.expiresAt).toBeGreaterThan(Date.now());
   });
 
   it('should return 404 for unknown session', async () => {

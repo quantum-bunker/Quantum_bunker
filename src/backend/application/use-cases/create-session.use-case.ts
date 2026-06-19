@@ -40,8 +40,8 @@ export class CreateSession {
       pendingPeers: {},
       status: SessionStatus.PENDING,
       maxPeers: SESSION_LIMITS.MAX_PEERS,
-      participantCount: 0,
-      emptySince: now,
+      participantCount: 1, // host is in peers from the start
+      emptySince: null,
     };
 
     await this.store.save(sess);
