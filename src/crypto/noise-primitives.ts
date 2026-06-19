@@ -7,7 +7,7 @@ export const DHLEN = 32;
 export const KEYLEN = 32;
 export const EMPTY = new Uint8Array(0);
 
-export function concatBytes(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
+export function concatBytes(...parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
@@ -25,7 +25,7 @@ export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
-export function utf8(s: string): Uint8Array<ArrayBuffer> {
+export function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
@@ -39,7 +39,7 @@ export function toBase64(b: Uint8Array): string {
   return btoa(s);
 }
 
-export function fromBase64(s: string): Uint8Array<ArrayBuffer> {
+export function fromBase64(s: string): Uint8Array {
   const bin = atob(s);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
