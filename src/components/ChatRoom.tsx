@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Info, ShieldCheck, ShieldAlert, ShieldQuestion, Radio, Server, Activity, Terminal, X, Search, Ban, Paperclip, UserPlus, UserCheck, Video, AlertTriangle, WifiOff } from 'lucide-react';
+import { Info, ShieldCheck, ShieldAlert, ShieldQuestion, Radio, Server, Activity, Terminal, X, Search, Ban, Paperclip, UserPlus, UserCheck, Video } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useRelay } from '../useRelay';
 import { normalizeQuery, messageMatches } from '../message-search';
@@ -34,7 +34,7 @@ interface ChatRoomProps {
 }
 
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset, identity }: ChatRoomProps) {
-  const { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
+  const { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
   const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
   const { family } = useTheme();
   const classic = family === 'classic';
@@ -347,21 +347,6 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
                 ? <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-900 dark:hover:text-white shrink-0" title="Clear search"><X size={13} /></button>
                 : <button onClick={() => setShowSearch(false)} className="text-slate-400 hover:text-slate-900 dark:hover:text-white shrink-0" title="Close search"><X size={13} /></button>}
             </div>
-          </div>
-        )}
-
-        {(connectionState === 'reconnecting' || connectionState === 'offline') && (
-          <div className="px-4 lg:px-6 py-2 border-b border-amber-500/30 bg-amber-500/10 flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-300" style={{ fontFamily: 'var(--qb-font)' }} role="status">
-            {connectionState === 'reconnecting'
-              ? <><Activity size={13} className="animate-spin shrink-0" /> Connection lost — reconnecting…</>
-              : <><WifiOff size={13} className="shrink-0" /> Disconnected from the relay.</>}
-          </div>
-        )}
-        {notice && (
-          <div className="px-4 lg:px-6 py-2 border-b border-amber-500/30 bg-amber-500/10 flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-300" style={{ fontFamily: 'var(--qb-font)' }} role="alert">
-            <AlertTriangle size={13} className="shrink-0" />
-            <span className="flex-1">{notice.text}</span>
-            <button onClick={dismissNotice} className="hover:opacity-70 shrink-0" aria-label="Dismiss"><X size={13} /></button>
           </div>
         )}
 
