@@ -160,7 +160,7 @@ classDiagram
 | Confidentiality | Client-side double-ratchet E2E; server sees only ciphertext |
 | Media confidentiality | DTLS-SRTP (calls); double-ratchet over DTLS (data channels) |
 | MITM detection | Noise-derived safety numbers; full-screen key-change alert blocks messaging |
-| Replay | Server nonce cache (`NONCE_CACHE_MAX` 50k, server-relative); client nonce dedup. No client-clock drift rejection — unsynchronized devices must still deliver |
+| Replay | Server nonce cache (`NONCE_CACHE_MAX` 50k) + 60s timestamp drift window; client nonce dedup |
 | Traffic analysis | Fixed plaintext buckets (8 KB / 64 KB / 512 KB / 4 MB) + 0–120 ms jitter on non-interactive frames |
 | Abuse / DoS | 10 msg/s/peer, 20 frames/s/socket, 50 conn/IP/min, payload & file caps, per-socket backpressure cutoff |
 | Auth | Host recovery token (UUID) + per-session peer token; no accounts |

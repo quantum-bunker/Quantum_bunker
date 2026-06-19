@@ -23,7 +23,7 @@ The backend relay operates as a **zero-knowledge dumb forwarder**:
    - Never log, store, parse, or decode it.
    - Never buffer it beyond the time needed for a single relay hop.
 3. The server has no knowledge of encryption keys, plaintext content, or the semantic meaning of any message.
-4. `nonce` is the anti-replay control (server-relative dedup cache). `timestamp` is **not** validated for drift — clients are not time-synchronized, so rejecting on the client-vs-server clock difference would break all delivery for skewed devices. Their cryptographic meaning is managed entirely by clients.
+4. `nonce` and `timestamp` are validated for anti-replay only (reject messages outside `TIMESTAMP_TOLERANCE_MS`). Their cryptographic meaning is managed entirely by clients.
 5. `EnvelopeRejected` events always redact `rawEnvelope.payload` before emission — no subscriber ever sees payload content.
 
 **Binding rule:** No function in `core/` or `application/` may receive, return, or operate on the `payload` field as anything other than `string`. No decoding, parsing, or inspection — ever.

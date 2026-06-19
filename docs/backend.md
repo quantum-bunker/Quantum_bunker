@@ -156,7 +156,7 @@ Two layers of rate limiting:
 
 ## Replay Prevention
 
-`RelayMessage` maintains a bounded nonce cache keyed by `sessionId:from:nonce`, each entry timestamped with the **server's** clock when first seen. Any envelope whose key is already present is rejected with `Duplicate nonce`. The cache is capped at `NONCE_CACHE_MAX` (50,000 entries) using a FIFO eviction strategy; `TIMESTAMP_TOLERANCE_MS` only sets the prune cutoff. The relay does **not** reject on the client's `timestamp` drift, since clients are not time-synchronized.
+`RelayMessage` maintains a bounded nonce cache (`Map<nonce, timestamp>`). Any envelope whose nonce was seen within `TIMESTAMP_TOLERANCE_MS` (60s) is rejected with `Duplicate nonce`. The cache is capped at `NONCE_CACHE_MAX` (50,000 entries) using a FIFO eviction strategy.
 
 ---
 

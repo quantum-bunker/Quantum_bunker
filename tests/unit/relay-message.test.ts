@@ -64,26 +64,22 @@ describe('RelayMessage Use Case', () => {
     }));
   });
 
-  it('relays despite a large client-clock skew (drift is not a rejection reason)', async () => {
+  it('should reject if timestamp drift is too large', async () => {
     const session = {
       id: 'sess-1',
       createdAt: Date.now(),
       expiresAt: Date.now() + 10000,
       lastActivityAt: Date.now(),
       status: SessionStatus.ACTIVE,
-      peers: {
-        'peer-a': { id: 'peer-a', joinedAt: Date.now(), lastSeenAt: Date.now() },
-        'peer-b': { id: 'peer-b', joinedAt: Date.now(), lastSeenAt: Date.now() }
-      },
+      peers: { 'peer-a': { id: 'peer-a', joinedAt: Date.now(), lastSeenAt: Date.now() } },
       pendingPeers: {},
       hostId: 'peer-a',
       hostRecoveryToken: 'token',
       maxPeers: 10,
-      participantCount: 2,
+      participantCount: 1,
       emptySince: Date.now()
     };
     await store.save(session);
-    transport.connectedPeers['sess-1'] = ['peer-b'];
 
     const spy = vi.spyOn(eventBus, 'emit');
     const envelope: RelayEnvelope = {
@@ -96,12 +92,9 @@ describe('RelayMessage Use Case', () => {
     };
 
     await relayMessage.execute(envelope);
-
-    expect(transport.sentMessages.length).toBe(1);
-    expect(transport.sentMessages[0].peerId).toBe('peer-b');
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'MessageRelayed',
-      payload: expect.objectContaining({ from: 'peer-a' })
+      type: 'EnvelopeRejected',
+      payload: expect.objectContaining({ reason: 'Timestamp drift too large' })
     }));
   });
 

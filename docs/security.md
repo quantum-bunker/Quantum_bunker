@@ -112,11 +112,13 @@ Nothing is persisted on the server — membership state is zero.
 
 ## Replay Prevention
 
-**Nonce deduplication:** A bounded cache (`NONCE_CACHE_MAX` = 50,000 entries, FIFO eviction) tracks seen nonces, keyed by `sessionId:from:nonce`. Duplicate nonces are rejected. This is the sole, server-relative replay defense — it does not depend on the client clock.
+Two layers:
+
+**Timestamp validation:** Envelopes with `timestamp` outside `±TIMESTAMP_TOLERANCE_MS` (60s) from server time are rejected.
+
+**Nonce deduplication:** A bounded cache (`NONCE_CACHE_MAX` = 50,000 entries, FIFO eviction) tracks seen nonces. Duplicate nonces are rejected.
 
 The client also deduplicates by nonce to handle relay fan-out edge cases.
-
-> The relay does **not** reject envelopes based on the difference between the client's `timestamp` and server time. Clients are not time-synchronized; a device whose wall clock was even a minute off would otherwise have every envelope — including the Noise handshake signaling — silently rejected, while plaintext control frames like `join` still passed, making a vault appear joinable but unable to relay a single message. `TIMESTAMP_TOLERANCE_MS` now only bounds the nonce cache's prune window. The `timestamp` field remains in the envelope for client-side ordering/display.
 
 ---
 

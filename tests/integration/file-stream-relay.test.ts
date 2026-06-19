@@ -93,7 +93,7 @@ async function streamFile(
   const payload = JSON.stringify(channels.encryptForAll(JSON.stringify(init)));
   transport.message(JSON.stringify({ type: 'file', from: 'alice', nonce, timestamp: 0, payload, sessionId: 's' }));
   for await (const frame of frames()) {
-    transport.binary(frame.buffer.slice(0) as ArrayBuffer);
+    transport.binary(frame.buffer.slice(0));
   }
   return { nonce, chunks: init.chunks };
 }
