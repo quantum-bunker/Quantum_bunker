@@ -105,7 +105,7 @@ describe('DoubleRatchet', () => {
     const { alice, bob } = makePair();
     // produce 102 messages; bob gets the last one first, which would require
     // skipping 101 keys (> MAX_SKIP=100)
-    const slots = [];
+    const slots: ReturnType<typeof alice.encrypt>[] = [];
     for (let i = 0; i < 102; i++) slots.push(alice.encrypt(enc(`m${i}`)));
     expect(() => bob.decrypt(slots[101])).toThrow('DR_SKIP_LIMIT_EXCEEDED');
   });

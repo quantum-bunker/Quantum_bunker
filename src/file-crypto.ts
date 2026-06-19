@@ -26,20 +26,20 @@ export function isFileCipher(v: unknown): v is FileCipher {
   return v === 'AES-GCM' || v === 'ChaCha20-Poly1305';
 }
 
-function randomBytes(n: number): Uint8Array {
+function randomBytes(n: number): Uint8Array<ArrayBuffer> {
   const b = new Uint8Array(n);
   crypto.getRandomValues(b);
   return b;
 }
 
-async function deriveKeyBytes(password: string, salt: Uint8Array, iter: number): Promise<Uint8Array> {
+async function deriveKeyBytes(password: string, salt: Uint8Array<ArrayBuffer>, iter: number): Promise<Uint8Array<ArrayBuffer>> {
   const baseKey = await crypto.subtle.importKey('raw', utf8(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits(
     { name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' },
     baseKey,
     256,
   );
-  return new Uint8Array(bits);
+  return new Uint8Array(bits as ArrayBuffer);
 }
 
 export async function encryptFileData(
@@ -54,7 +54,7 @@ export async function encryptFileData(
   let ct: Uint8Array;
   if (algo === 'AES-GCM') {
     const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
-    ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext));
+    ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext as Uint8Array<ArrayBuffer>));
   } else {
     ct = new ChaCha20Poly1305(keyBytes).seal(iv, plaintext);
   }

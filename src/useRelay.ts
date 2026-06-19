@@ -56,6 +56,12 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const [activePeers, setActivePeers] = useState<string[]>([]);
   const [joinRequests, setJoinRequests] = useState<{peerId: string; message: string}[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // connectionState is additive to isConnected: it drives the reconnect UX
+  // (banner) without changing the many call sites that gate on isConnected.
+  const [connectionState, setConnectionState] = useState<'connecting' | 'online' | 'reconnecting' | 'offline'>('connecting');
+  // Transient, user-facing notice for non-terminal server pushback (e.g. rate
+  // limiting) that would otherwise only reach the toggleable event log.
+  const [notice, setNotice] = useState<{ kind: 'warn' | 'error'; text: string } | null>(null);
   const [isGroup, setIsGroup] = useState(false);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [ioLoad, setIoLoad] = useState<number>(0);
@@ -79,6 +85,14 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const peerMemberKeysRef = useRef<Record<string, { pk: string; label: string }>>({});
   peerMemberKeysRef.current = peerMemberKeys;
   const socketRef = useRef<WebSocket | null>(null);
+  // Reconnect bookkeeping. shouldReconnectRef is cleared on unmount and on
+  // terminal server errors (destroyed / kicked / session gone) so we never loop
+  // against a vault that no longer exists. connectRef always points at the latest
+  // connect() so the backoff timer can re-dial without churning the WS effect.
+  const shouldReconnectRef = useRef(true);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const connectRef = useRef<() => void>(() => {});
   const channelsRef = useRef<PeerChannels | null>(null);
   // Latest resolved static identity (null = burner). Read at connect time so an
   // identity unlocked before joining is used without re-triggering connect.
@@ -123,6 +137,29 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       bytesInWindowRef.current += data.length;
     }
   }, []);
+
+  const dismissNotice = useCallback(() => setNotice(null), []);
+
+  // Exponential backoff (1s → 15s cap) re-dial. Only ever fires while
+  // shouldReconnectRef is set; onopen resets the attempt counter.
+  const scheduleReconnect = useCallback(() => {
+    if (!shouldReconnectRef.current || reconnectTimerRef.current != null) return;
+    const attempt = reconnectAttemptsRef.current;
+    const delay = Math.min(1000 * 2 ** attempt, 15000);
+    reconnectAttemptsRef.current = attempt + 1;
+    setConnectionState('reconnecting');
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      connectRef.current();
+    }, delay);
+  }, []);
+
+  // Auto-expire transient notices so the rate-limit banner clears itself.
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(id);
+  }, [notice]);
 
   const sendSignal = useCallback((obj: Record<string, unknown>) => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN || !sessionId || !peerId) return;
@@ -180,7 +217,14 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     const others = activePeersRef.current.filter(id => id !== peerId);
     if (shouldUseP2P(others, id => p2pRef.current.isConnected(id))) {
       const data = JSON.stringify(env);
-      for (const id of others) p2pRef.current.sendDirect(id, data);
+      // A data channel that reports "open" can still refuse a frame (closing,
+      // backpressure) or, across real NATs, appear connected while bytes never
+      // traverse. Text/receipt/edit frames may safely fall back to the relay —
+      // the recipient dedups by nonce, so a peer that already got the P2P copy
+      // ignores the relayed duplicate. Never silently drop a message: if any
+      // peer's direct send is unconfirmed, relay the whole envelope.
+      const allDelivered = others.every(id => p2pRef.current.sendDirect(id, data));
+      if (!allDelivered) sendRaw(env);
     } else {
       sendRaw(env);
     }
@@ -552,6 +596,8 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
     socket.onopen = () => {
       console.log('WS Connected');
+      reconnectAttemptsRef.current = 0;
+      setConnectionState('online');
       const msg = localStorage.getItem('qb-join-msg') || 'Hello';
       const recoveryToken = localStorage.getItem(`qb-recovery-${sessionId}`);
       const peerToken = sessionStorage.getItem(`qb-peer-token-${sessionId}`);
@@ -626,8 +672,16 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
       if (data.type === 'error') {
         setError(data.message);
-        if (data.message === 'Session destroyed' || data.message === 'Join rejected by host' || data.message === 'You have been kicked by the host') {
-           socket.close();
+        if (data.code === 'RATE_LIMIT_EXCEEDED') {
+          setNotice({ kind: 'warn', text: 'Sending too fast — the relay is throttling you. Slow down a moment.' });
+        }
+        // Terminal: the vault is gone or we are no longer welcome. Stop the
+        // backoff loop before closing so we do not re-dial a dead session.
+        const TERMINAL_MESSAGES = ['Session destroyed', 'Join rejected by host', 'You have been kicked by the host', 'Session not found', 'Session full'];
+        const TERMINAL_CODES = ['INVALID_PEER_TOKEN', 'INVALID_MEMBERSHIP'];
+        if (TERMINAL_MESSAGES.includes(data.message) || TERMINAL_CODES.includes(data.code)) {
+          shouldReconnectRef.current = false;
+          socket.close();
         }
         return;
       }
@@ -639,6 +693,8 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     socket.onclose = () => {
       setIsConnected(false);
       console.log('WS Disconnected');
+      if (shouldReconnectRef.current) scheduleReconnect();
+      else setConnectionState('offline');
     };
 
     socket.onerror = (err) => {
@@ -647,7 +703,8 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     };
 
     socketRef.current = socket;
-  }, [sessionId, peerId, sendRaw, sendSignal, dispatch, dispatchJittered]);
+  }, [sessionId, peerId, sendRaw, sendSignal, dispatch, dispatchJittered, scheduleReconnect]);
+  connectRef.current = connect;
 
   const sendMessage = useCallback((payload: string, type: EnvelopeType = EnvelopeType.NOISE_MESSAGE) => {
     if (!sessionId || !peerId) return;
@@ -795,7 +852,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
         }
         // A frame may be a view over a larger buffer; slice the exact range once
         // and reuse the same ArrayBuffer for every peer.
-        const ab = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength);
+        const ab = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) as ArrayBuffer;
         for (const id of others) {
           if (!p2pRef.current.sendBinaryDirect(id, ab)) throw new Error('SEND_FAILED');
         }
@@ -928,9 +985,16 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
   useEffect(() => {
     if (sessionId && peerId) {
+      shouldReconnectRef.current = true;
+      reconnectAttemptsRef.current = 0;
       connect();
     }
     return () => {
+      shouldReconnectRef.current = false;
+      if (reconnectTimerRef.current != null) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       socketRef.current?.close();
       p2pRef.current.reset();
     };
@@ -1051,5 +1115,5 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
+  return { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
 }

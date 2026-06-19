@@ -276,9 +276,7 @@ flowchart TD
     PT -- no --> X3[EnvelopeRejected PLAINTEXT_REFUSED]
     PT -- yes --> SZ{payload ≤ 16 MB?}
     SZ -- no --> X4[EnvelopeRejected PAYLOAD_TOO_LARGE]
-    SZ -- yes --> TS{timestamp within 60s drift?}
-    TS -- no --> X5[EnvelopeRejected TIMESTAMP_SKEW]
-    TS -- yes --> NC{nonce unseen?}
+    SZ -- yes --> NC{nonce unseen?}
     NC -- no --> X6[EnvelopeRejected REPLAY]
     NC -- yes --> OK[fan-out + MessageRelayed]
 

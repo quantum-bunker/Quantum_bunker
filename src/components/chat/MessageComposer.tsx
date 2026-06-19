@@ -27,8 +27,8 @@ export function MessageComposer({
   attachMenuOpen: boolean;
   onToggleAttachMenu: () => void;
   onCloseAttachMenu: () => void;
-  fileInputRef: RefObject<HTMLInputElement>;
-  largeFileInputRef: RefObject<HTMLInputElement>;
+  fileInputRef: RefObject<HTMLInputElement | null>;
+  largeFileInputRef: RefObject<HTMLInputElement | null>;
   onPickFiles: (files: FileList | null) => void;
   onLargeFiles: (files: FileList | null) => void;
   onOpenFilePicker: (protect: boolean) => void;

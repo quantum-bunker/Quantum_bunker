@@ -245,7 +245,7 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 | `RELAY_LIMITS.MAX_P2P_FILE_BYTES` | 256 MB | Per-file via P2P data channel |
 | `RELAY_LIMITS.FILE_CHUNK_BYTES` | 64 KB | P2P streaming chunk size |
 | `RELAY_LIMITS.WS_MAX_FRAME_BYTES` | 16 MB + 64 KB | WS frame size limit |
-| `RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS` | 60 s | Anti-replay drift window |
+| `RELAY_LIMITS.TIMESTAMP_TOLERANCE_MS` | 60 s | Nonce-cache prune cutoff only — relay does NOT reject on client clock drift |
 | `RELAY_LIMITS.MSG_PER_SECOND_LIMIT` | 10 | Per peer message rate |
 | `RELAY_LIMITS.SOCKET_MSG_PER_SECOND_LIMIT` | 20 | All WS frame types per socket |
 | `RELAY_LIMITS.CONN_PER_IP_LIMIT` | 50 | Connections per IP per window (env `RELAY_CONN_PER_IP_LIMIT`) |
