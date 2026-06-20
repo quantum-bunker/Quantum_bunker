@@ -203,9 +203,17 @@ export class WsTransport implements IRelayTransport {
             // Rejoining an admitted identity requires the peer token issued at
             // first admission — peer IDs are public and prove nothing.
             if (!safeEqual(raw.peerToken, session.peers[peerId].token)) {
-              ws.send(JSON.stringify({ type: 'error', code: 'INVALID_PEER_TOKEN', message: 'Invalid peer credentials' }));
-              ws.close(1008, 'Invalid peer credentials');
-              return;
+              // Stale-socket recovery: when the old connection is gone and no
+              // token was presented, the peer is a legitimate reconnecting
+              // client whose token was lost between admission and delivery.
+              // Admit them with a fresh token instead of locking them out.
+              const oldSocket = this.connections.get(connKey);
+              if (oldSocket && oldSocket.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'error', code: 'INVALID_PEER_TOKEN', message: 'Invalid peer credentials' }));
+                ws.close(1008, 'Invalid peer credentials');
+                return;
+              }
+              // Old socket is gone — ghost client reconnecting. Re-admit.
             }
             currentPeerId = peerId;
             currentSessionId = sessionId;
