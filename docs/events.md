@@ -223,6 +223,22 @@ kind: 'wl-state'         Peer shares current whitelist state snapshot
 kind: 'whitelist'        Peer sends a whitelist request/acceptance to a specific peer
 ```
 
+### Direct Mode Key Exchange
+```
+kind: 'kx-request'       Requester knocks on an inbox vault: { pk, ik, label }
+kind: 'kx-accept'        Owner accepts: { pairSecret, pk, ik, hostPk, token }
+kind: 'kx-confirm'       Requester returns a reciprocal token: { hostPk, token }
+```
+
+These three frames establish a persistent 1-on-1 link between two people who
+know each other's permanent Bunker ID. They are carried over the existing Noise
+channel inside the owner's inbox vault, so the relay sees only opaque
+`SIGNALING` payloads — it learns nothing about who added whom.
+
+Nothing is auto-accepted: the owner sees a request card and chooses. Neither
+side can message the other until all three frames have been exchanged, so
+mutual consent is structural rather than a UI guard. See ADR-007.
+
 The server has zero knowledge of these sub-kinds. It routes the `SIGNALING` envelope by `sessionId` without inspecting the payload.
 
 ---

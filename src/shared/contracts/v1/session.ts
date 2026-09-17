@@ -43,6 +43,13 @@ export interface Session {
 export interface CreateSessionRequest {
   name?: string;
   expiresInSeconds?: number;
+  hostPublicKey?: string;
+  // Direct mode: both sides of a pair derive the same vault id from a shared
+  // secret, so whichever arrives first creates it and the other joins the same
+  // one. Supplying an id that already exists is a join, not a create — the
+  // response withholds host credentials in that case.
+  id?: string;
+  maxPeers?: number;
 }
 
 export interface CreateSessionResponse {
@@ -50,8 +57,11 @@ export interface CreateSessionResponse {
   name?: string;
   expiresAt: number;
   publicKey: string; // Placeholder for Phase 2
-  hostId: string;
-  hostRecoveryToken: string;
+  // Absent when `existing` is true: a caller who merely guessed a vault id must
+  // never be handed authority over it.
+  hostId?: string;
+  hostRecoveryToken?: string;
+  existing?: boolean;
 }
 
 export interface JoinSessionResponse {

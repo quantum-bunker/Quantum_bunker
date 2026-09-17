@@ -79,6 +79,34 @@ export const RELAY_LIMITS = {
 // place; the definition lives in the shared contract because the client pads.
 export { PADDING } from '../../shared/contracts/v1/padding';
 
+// Direct mode: persistent 1-on-1 links between people who have added each other
+// by their permanent Bunker ID. The relay learns nothing new — every value here
+// shapes client behaviour or the shape of the ephemeral vault a pair meets in.
+export const DIRECT_LIMITS = {
+  // Each known person costs one idle presence socket while the app is open.
+  // Sized so a full contact list stays well under CONN_PER_IP_LIMIT (50 per
+  // minute) even with the open chat and a couple of draining links on top.
+  MAX_KNOWN_PEERS: 15,
+  // A pair vault is strictly two people. This is what structurally guarantees
+  // the 1-on-1 call rule holds in direct mode without any extra UI gating.
+  PAIR_VAULT_MAX_PEERS: 2,
+  // Longer than a one-shot vault because a pair vault is refreshed for as long
+  // as either side has the app open, and short enough that an abandoned one is
+  // reaped promptly.
+  PAIR_VAULT_TTL_MS: 60 * 60 * 1000, // 1 hour
+  // The inbox vault id is derived from the owner's public key alone, so it would
+  // otherwise be one eternal relay-visible identifier per user. Rotating it
+  // daily bounds how long the relay can correlate knocks to one inbox.
+  INBOX_EPOCH_MS: 24 * 60 * 60 * 1000, // 24 hours
+  // Membership tokens are reissued opportunistically while both peers are
+  // online. A relationship must never expire just because two people were both
+  // offline for a while, and there is no server state to fall back on.
+  MEMBERSHIP_REISSUE_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
+  // Hidden full relay stacks mounted to flush queued messages to contacts who
+  // just came online, on top of the chat the user actually has open.
+  MAX_BACKGROUND_LINKS: 2,
+};
+
 export const REST_LIMITS = {
   WINDOW_MS: 60 * 1000,
   SESSION_CREATE_PER_WINDOW: envInt('REST_SESSION_CREATE_LIMIT', 10),

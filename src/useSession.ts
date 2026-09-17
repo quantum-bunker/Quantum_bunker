@@ -53,6 +53,11 @@ export function useSession() {
         body: JSON.stringify({ name, hostPublicKey }),
       });
       const data: CreateSessionResponse = await resp.json();
+      // Host credentials are withheld only for an idempotent create, which the
+      // ephemeral vault flow never performs — it always asks for a fresh id.
+      if (!data.hostId || !data.hostRecoveryToken) {
+        throw new Error('Relay withheld host credentials for a new vault');
+      }
       setSessionId(data.sessionId);
       setSessionName(data.name || null);
       setExpiresAt(data.expiresAt);

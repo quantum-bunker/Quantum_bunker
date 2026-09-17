@@ -14,6 +14,13 @@ export const CreateSessionRequestSchema = z.object({
   name: z.string().max(64).optional(),
   expiresInSeconds: z.number().int().min(60).max(3600 * 24).optional(),
   hostPublicKey: z.string().min(1).max(128).optional(),
+  // A client-derived vault id. Must be a UUID because RelayEnvelopeSchema
+  // above validates sessionId as one — anything else would create a vault no
+  // envelope could ever be addressed to.
+  id: z.string().uuid().optional(),
+  // Only the floor is a contract concern; the ceiling is policy, so the use
+  // case clamps this to SESSION_LIMITS.MAX_PEERS.
+  maxPeers: z.number().int().min(2).optional(),
 });
 
 // Peer ids become object keys and Map keys on the relay, so they carry the same
