@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trash2, Sun, Moon, Menu, Palette, HelpCircle, X, BookOpen } from 'lucide-react';
+import { Trash2, Sun, Moon, Menu, Palette, HelpCircle, X, BookOpen, Radio } from 'lucide-react';
 import { useSession } from './useSession';
 import { useMembership } from './useMembership';
 import { useContacts } from './useContacts';
@@ -13,10 +13,12 @@ import { ClassicHome } from './components/ClassicHome';
 import { JoinLinkModal } from './components/JoinLinkModal';
 import { HelpModal } from './components/HelpModal';
 import { Toast, ToastState } from './components/Toast';
+import { ConnectivitySettings } from './components/ConnectivitySettings';
 
 export default function App() {
   const { family, mode, setFamily, toggleMode } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [netMenuOpen, setNetMenuOpen] = useState(false);
   const [view, setView] = useState<'home' | 'chat'>(() => {
     return sessionStorage.getItem('qb-sessionId') ? 'chat' : 'home';
   });
@@ -170,6 +172,14 @@ export default function App() {
                   </motion.div>
                 </>
               )}
+            </AnimatePresence>
+          </div>
+          <div className="relative">
+            <button onClick={() => setNetMenuOpen(o => !o)} className="p-1.5 sm:p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-500 dark:text-slate-400 transition-colors" title="Direct connection (STUN) settings" aria-label="Open connectivity settings">
+              <Radio size={16} className="sm:w-[18px] sm:h-[18px]" />
+            </button>
+            <AnimatePresence>
+              {netMenuOpen && <ConnectivitySettings onClose={() => setNetMenuOpen(false)} />}
             </AnimatePresence>
           </div>
           <button onClick={() => setHelpOpen(true)} className="p-1.5 sm:p-2 rounded-lg qb-accent-text hover:qb-accent-soft-bg ring-1 qb-accent-border transition-colors" title="Help & guide — press ? anytime" aria-label="Open help and guide">
