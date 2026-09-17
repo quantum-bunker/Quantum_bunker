@@ -16,6 +16,7 @@ import { Toast, ToastState } from './components/Toast';
 import { ConnectivitySettings } from './components/ConnectivitySettings';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useMediaPrompt } from './media-prompt';
+import { PROTOCOL_VERSION } from './shared/contracts/v1/protocol';
 
 export default function App() {
   const { family, mode, setFamily, toggleMode } = useTheme();
@@ -143,7 +144,7 @@ export default function App() {
           </div>
           <span className="qb-title font-bold tracking-widest sm:text-base text-[10px]">
             {family === 'classic' ? 'Quantum Bunker' : 'QUANTUM_BUNKER'}
-            {family !== 'classic' && <span className="qb-accent-text text-[10px] font-normal ml-2 opacity-70 hidden md:inline">v1.0.4-RELAY</span>}
+            {family !== 'classic' && <span className="qb-accent-text text-[10px] font-normal ml-2 opacity-70 hidden md:inline" title={`Build ${__BUILD_COMMIT__}`}>v{__APP_VERSION__}</span>}
           </span>
         </div>
         <div className="flex items-center gap-3 sm:gap-6">
@@ -350,7 +351,7 @@ export default function App() {
               <span>TRANSPORT: <span className="qb-title">WSS/1.1</span></span>
             </div>
             <div className="flex gap-4">
-              <span className="hidden md:inline">Contract: v1.0.4</span>
+              <span className="hidden md:inline">Protocol: v{PROTOCOL_VERSION}</span>
               <span className="text-emerald-500 dark:text-emerald-500 flex items-center gap-1.5 font-bold"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Node_Stable</span>
             </div>
           </>

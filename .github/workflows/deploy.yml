@@ -195,9 +195,17 @@ jobs:
           PROD_URL="${{ vars.PROD_URL }}"
           if [ -n "$PROD_URL" ]; then
             echo "Checking $PROD_URL/api/health …"
-            curl --fail --silent --max-time 10 "$PROD_URL/api/health" \
-              && echo "Health check passed." \
-              || { echo "::error::Production health check FAILED."; exit 1; }
+            RESPONSE="$(curl --fail --silent --max-time 10 "$PROD_URL/api/health")" || { echo "::error::Production health check FAILED."; exit 1; }
+            echo "Health check passed: $RESPONSE"
+            # /api/health reports the running build, so the smoke test can also
+            # confirm WHICH version is live, not merely that something answers.
+            LIVE_VERSION="$(echo "$RESPONSE" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo 'unknown')"
+            EXPECTED="$(node -p "require('./package.json').version")"
+            if [ "$LIVE_VERSION" != "$EXPECTED" ]; then
+              echo "::warning::Live version is $LIVE_VERSION but this build is $EXPECTED - the deploy may not have rolled over yet."
+            else
+              echo "Live version matches this build: $EXPECTED"
+            fi
           else
             echo "::notice::PROD_URL variable not set; skipping smoke test."
           fi

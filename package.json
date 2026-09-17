@@ -1,7 +1,13 @@
 {
-  "name": "react-example",
+  "name": "quantum-bunker",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Zero-knowledge, ephemeral, real-time messaging vault. The server is a blind relay: it never decrypts, logs, or stores message payloads.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quantum-bunker/Quantum_bunker.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=20.0.0"

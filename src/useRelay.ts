@@ -64,6 +64,11 @@ type ServerControlFrame = {
   code?: string;
 };
 
+// Backoff is 1s, 2s, 4s, 8s — so by the fourth attempt roughly 15 seconds have
+// passed. A relay that is merely busy answers well inside that; one that is
+// cold-starting does not. Past this, the UI explains rather than just spinning.
+const COLD_START_ATTEMPT_HINT = 3;
+
 export function useRelay(sessionId: string | null, peerId: string | null, identity?: KeyPair | null) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -189,6 +194,16 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     const attempt = reconnectAttemptsRef.current;
     const delay = Math.min(1000 * 2 ** attempt, 15000);
     reconnectAttemptsRef.current = attempt + 1;
+    // The host spins the instance down after idle and takes 30-60s to come back,
+    // and every deploy restarts it. Once the retries have run past the point
+    // where a healthy relay would have answered, say so — the alternative is a
+    // silent "reconnecting" spinner that looks identical to a dead relay.
+    if (attempt >= COLD_START_ATTEMPT_HINT) {
+      setNotice({
+        kind: 'warn',
+        text: 'The relay is waking up — this takes up to a minute after it has been idle. Vaults created before it slept are gone; a new one will be needed.',
+      });
+    }
     setConnectionState('reconnecting');
     reconnectTimerRef.current = window.setTimeout(() => {
       reconnectTimerRef.current = null;
@@ -650,9 +665,10 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     handleBinaryRef.current = handleBinary;
 
     socket.onopen = () => {
-      console.log('WS Connected');
+      const wasRetrying = reconnectAttemptsRef.current > 0;
       reconnectAttemptsRef.current = 0;
       setConnectionState('online');
+      if (wasRetrying) setNotice({ kind: 'warn', text: 'Relay reconnected.' });
       const msg = localStorage.getItem('qb-join-msg') || 'Hello';
       const recoveryToken = localStorage.getItem(`qb-recovery-${sessionId}`);
       const peerToken = sessionStorage.getItem(`qb-peer-token-${sessionId}`);
@@ -690,10 +706,6 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
           sessionStorage.setItem(`qb-peer-token-${sessionId}`, data.peerToken);
         }
         // Server might tell us we are host via recovery
-        if (data.isHost) {
-          // This would ideally update useSession, but we can at least log it or handle local state if needed
-          console.log('Joined as Host (recovered)');
-        }
         return;
       }
 
@@ -767,9 +779,10 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       else setConnectionState('offline');
     };
 
-    socket.onerror = (err) => {
+    socket.onerror = () => {
+      // The close handler drives the reconnect; a transport error on its own is
+      // not terminal and must not be reported as one.
       setError('WebSocket connection failed');
-      console.error(err);
     };
 
     socketRef.current = socket;
