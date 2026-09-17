@@ -103,7 +103,6 @@ export async function setupApp() {
       }
 
       const session = await container.createSession.execute(result.data.expiresInSeconds, result.data.name, result.data.hostPublicKey);
-      console.log(`[API] Created session: ${session.id}`);
       res.status(201).json({
         sessionId: session.id,
         name: session.name,
@@ -124,10 +123,8 @@ export async function setupApp() {
     const id = req.params.id.trim();
     const session = await container.store.get(id);
     if (!session) {
-      console.warn(`[API] Session not found: ${id}`);
       return res.status(404).json({ error: 'Session not found' });
     }
-    console.log(`[API] Fetched session: ${id}`);
     // Public metadata only — never the peer map, host identity, or any token.
     const info: PublicSessionInfo = {
       id: session.id,
@@ -177,7 +174,6 @@ export async function setupApp() {
     }
     await container.store.delete(id);
     container.transport.disconnectSession(id);
-    console.log(`[API] Destroyed session: ${id}`);
     res.status(204).send();
   });
 

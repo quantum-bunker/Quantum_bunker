@@ -31,7 +31,35 @@ RelayEnvelope {
 - `EnvelopeRejected` events redact `rawEnvelope.payload` before emission
 - Zod schema validates `payload` as a non-empty string only — no structural parsing
 
-If the server is subpoenaed, the most it can provide is: who connected to which session, when, and the size and type of each message — never the content.
+---
+
+### What is actually retained
+
+Nothing is written to disk, and there is no database, no file transport, no
+request logger, and no analytics. The only durable artefact a deployment
+produces is the container's stdout.
+
+**Emitted to stdout by default:**
+
+| Line | Contains |
+|---|---|
+| `SessionCreated` | session id |
+| `PeerJoined` | session id only — **not** the peer id |
+| `SessionExpired` | session id, expiry reason |
+| `EnvelopeRejected` | session id, rejection reason, envelope metadata with `payload` redacted |
+
+**Never emitted:** message payloads, per-message metadata (sender, type, byte
+size), IP addresses, user agents, peer ids, tokens.
+
+Per-envelope metadata logging is **off**. It previously wrote
+`sessionId + from + envelopeType + byteSize` for every relayed message, which is
+a complete social and timing graph per session — the exact metadata the padding
+and jitter defences exist to blunt. It can be switched back on for local
+debugging with `QB_METADATA_LOGS=1`, which must never be set on a deployment.
+
+If the server is subpoenaed, the most it can provide is which sessions existed
+and when, plus whatever the hosting provider observes at the network layer
+independently of this application.
 
 See ADR-001.
 
@@ -157,7 +185,37 @@ Files transferred over WebRTC data channels are encrypted at two layers:
 
 The server never sees the data channel traffic. Signaling (SDP/ICE) travels through the relay as opaque `SIGNALING` envelopes.
 
-When ICE permanently fails (`directFailed: true`), the UI surfaces the failure. Media is never silently rerouted through the relay.
+When ICE permanently fails (`directFailed: true`), the UI surfaces the failure
+together with a reason (`no-stun`, `no-reflexive-candidate`, `symmetric-nat`,
+`timeout`, `signaling-error`, `peer-left`). Media is never silently rerouted
+through the relay.
+
+### STUN
+
+**Public STUN is enabled by default** (Cloudflare and Google), and TURN is
+stripped from every configuration source — media is never relayed, by design.
+
+A STUN server learns the IP address that queries it and the time of the query.
+It never sees messages, files, call media, signaling, or ciphertext, and it
+cannot tell which session a query belongs to or who the other peer is.
+
+This is a deliberate change from an earlier empty default. With no STUN, a peer
+can only offer private host candidates, so the direct path worked on a single
+LAN and nowhere else — which meant large files and calls failed for essentially
+every real user. Self-hosting STUN is also not available on the current host,
+which provides no inbound UDP.
+
+Users control this per device under the connection settings, stored in
+`localStorage` as `qb-stun`:
+
+| Mode | Behaviour |
+|---|---|
+| `default` | Built-in public STUN servers |
+| `custom` | Only the user's own `stun:`/`stuns:` URLs |
+| `off` | No ICE servers at all — LAN only, nothing is reflected |
+
+Operators can override the default with `VITE_ICE_SERVERS` or `VITE_STUN_URL`.
+Precedence is: user setting → `VITE_ICE_SERVERS` → `VITE_STUN_URL` → built-in.
 
 ---
 

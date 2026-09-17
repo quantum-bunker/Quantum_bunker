@@ -36,7 +36,7 @@ Perfect for: **secure team chat**, **private group messaging**, **confidential p
 
 ## ❓ Why Quantum Bunker?
 
-- **No Logs. No Storage. No Traces.** — Messages are relayed, never persisted. Once a vault is destroyed, everything is gone.
+- **No Logs. No Storage. No Traces.** — Messages are relayed, never persisted, and no per-message metadata is logged: not the sender, the type, or the size. The server's stdout records only that a session was created, joined, expired, or rejected an envelope. Once a vault is destroyed, everything is gone. ([what is retained](docs/security.md#what-is-actually-retained))
 - **True End-to-End Encryption** — Powered by **X25519 key exchange**, **Ed25519 signatures**, and **ChaCha20-Poly1305 AEAD** symmetric encryption via the [`@stablelib`](https://github.com/StableLib/stablelib) cryptographic library suite.
 - **Anti-Screenshot & Anti-Recording Protection** — Built-in **blur-to-reveal** mechanism and **automatic app-focus blackout** thwart screen capture attempts.
 - **Open Source & Auditable** — MIT-licensed. Every line of code is transparent and reviewable.
@@ -64,7 +64,8 @@ Quantum Bunker is designed with a **privacy-first, security-by-default** philoso
 - **E2EE Encryption Suite**: X25519 (key agreement) + Ed25519 (signing) + ChaCha20-Poly1305 (authenticated symmetric encryption) + HKDF (key derivation) + SHA-256 (hashing).
 - **Zero-Knowledge Backend**: The server sees only encrypted envelopes — it cannot read message contents.
 - **Anti-Capture Guard**: Message text is blurred by default. Users hover or click to reveal. Alt+Tab or window blur instantly blackouts the entire app UI.
-- **No Persistence**: Messages live only in browser memory. No database storage. No logging of decrypted content.
+- **No Persistence**: Messages live only in browser memory. No database storage. No logging of decrypted content, and no per-message metadata logging.
+- **Direct connections use public STUN by default**: a STUN server learns an IP address and a timestamp, never content. Switch it to your own server or off entirely in the connection settings — see [security.md](docs/security.md#stun).
 - **Host-Controlled Access**: Vault hosts approve or reject every joining peer. No unauthorized access.
 - **Automatic Cleanup**: Idle vaults expire and are purged from server memory automatically.
 
