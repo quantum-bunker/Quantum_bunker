@@ -137,20 +137,53 @@ Sent only to the host when a peer enters the pending queue.
 `SIGNALING` envelopes carry client-to-client signaling. The server forwards them opaquely. The `payload` is a base64url-encoded JSON object with a `kind` discriminator:
 
 ### WebRTC (P2P data channels)
+
+One `kind: 'rtc'` frame, discriminated by `rtc`, addressed with `to`:
+
 ```
-kind: 'rtc-offer'        SDP offer from initiating peer
-kind: 'rtc-answer'       SDP answer from responding peer
-kind: 'ice-candidate'    ICE candidate from either peer
-kind: 'rtc-hangup'       Peer is closing the data channel connection
+{ kind: 'rtc', to, rtc: 'offer',      data }   SDP offer   (JSON string)
+{ kind: 'rtc', to, rtc: 'answer',     data }   SDP answer  (JSON string)
+{ kind: 'rtc', to, rtc: 'candidates', data }   ICE candidate BATCH (JSON array)
+{ kind: 'rtc', to, rtc: 'candidate',  data }   ICE candidate, single — receive only
 ```
 
+Receivers MUST ignore any frame whose `to` is not their own peer id: the relay
+fans `SIGNALING` out to every peer in the session.
+
 ### Voice/Video Calls
+
+One `kind: 'call'` frame, discriminated by `call`, addressed with `to`:
+
 ```
-kind: 'call'             Outbound call invite (contains SDP offer)
-kind: 'call-accept'      Callee accepts (contains SDP answer)
-kind: 'call-decline'     Callee declines
-kind: 'call-end'         Either party ends an active call
+{ kind: 'call', to, call: 'invite'  }                 Ring the callee
+{ kind: 'call', to, call: 'accept'  }                 Callee accepts
+{ kind: 'call', to, call: 'decline' }                 Callee declines
+{ kind: 'call', to, call: 'busy'    }                 Callee is already in a call
+{ kind: 'call', to, call: 'cancel'  }                 Caller aborts before answer
+{ kind: 'call', to, call: 'end'     }                 Either party ends an active call
+{ kind: 'call', to, call: 'sdp', sdp }                Media negotiation
+{ kind: 'call', to, call: 'ice', candidates }         ICE candidate BATCH
+{ kind: 'call', to, call: 'ice', candidate  }         ICE candidate, single — receive only
 ```
+
+The `to` check applies here too. Without it an invite rings every peer in the
+vault, and the fullscreen call UI covers chat for uninvolved peers.
+
+### ICE candidate batching
+
+Outbound ICE candidates are buffered for ~60 ms and emitted as one frame
+(`candidates`, an array). Previously each candidate was its own envelope, and a
+call's trickle burst exceeded `MSG_PER_SECOND_LIMIT` (10 per peer). The relay
+drops the excess, and the dropped frames included Noise handshakes — which left
+chat silently undecryptable. Batching is what collapses that burst.
+
+All `SIGNALING` output is additionally paced through a client-side priority
+queue (Noise handshake > chat > RTC mesh > call ICE) below the relay rate limit.
+See `src/transport/send-queue.ts`.
+
+**Compatibility:** senders emit `candidates`; receivers accept both `candidates`
+and the single-candidate `candidate` shape. Keep accepting `candidate` for at
+least one version so peers on the previous build can still negotiate.
 
 ### In-Chat Mutual Whitelist
 ```
