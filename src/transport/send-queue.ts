@@ -58,6 +58,12 @@ export class PriorityQueue<T> {
   clear(): void {
     for (const lane of this.lanes) lane.length = 0;
   }
+
+  clearExcept(keep: SendPriority): void {
+    for (let i = 0; i < this.lanes.length; i++) {
+      if (i !== keep) this.lanes[i].length = 0;
+    }
+  }
 }
 
 // Classifies a parsed SIGNALING frame into a lane. Anything unrecognised is
@@ -87,6 +93,7 @@ export class PacedSender<T> {
   private tokens: number;
   private lastRefill: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private paused = false;
 
   constructor(opts: PacedSenderOptions<T>) {
     this.opts = opts;
@@ -112,6 +119,7 @@ export class PacedSender<T> {
   }
 
   private pump(): void {
+    if (this.paused) return;
     this.refill();
     while (this.tokens >= 1) {
       const next = this.queue.dequeue();
@@ -132,6 +140,27 @@ export class PacedSender<T> {
     return this.queue.size;
   }
 
+  // Stops draining without discarding. The socket is gone but the queue's
+  // contents are not yet stale, so nothing must be written into a closed
+  // socket where sendRaw would silently swallow it.
+  pause(): void {
+    this.paused = true;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    // Budget accrued while paused is not owed to us; the relay's limiter kept
+    // running and a full bucket would burst straight through it on reconnect.
+    this.tokens = Math.min(this.tokens, this.opts.ratePerSecond);
+    this.lastRefill = this.now();
+    this.pump();
+  }
+
   // Drops everything still queued. Used on disconnect: a stale candidate for a
   // torn-down connection is worthless and would only spend budget.
   clear(): void {
@@ -140,5 +169,22 @@ export class PacedSender<T> {
       clearTimeout(this.timer);
       this.timer = null;
     }
+  }
+
+  // Drops the frames a dead connection invalidates while keeping handshake
+  // frames. A Noise channel outlives the socket it was negotiated over, and a
+  // handshake frame lost here has no retry anywhere: the channel stays
+  // half-open, allReady() never goes true, and every message silently diverts
+  // to the outbox with nothing shown to the user.
+  clearTransient(): void {
+    this.queue.clearExcept(SEND_PRIORITY.NOISE);
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    // Re-arm for whatever survived; the dropped lanes were holding the budget
+    // the kept frames now need. A paused sender no-ops here and drains on
+    // resume instead.
+    this.pump();
   }
 }

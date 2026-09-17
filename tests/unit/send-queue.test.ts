@@ -116,6 +116,38 @@ describe('PacedSender', () => {
     expect(sender.pending).toBe(0);
   });
 
+  it('keeps handshake frames on clearTransient and drops the rest', () => {
+    const { sent, sender } = build(1);
+    sender.enqueue('spent', SEND_PRIORITY.CALL);
+    sender.enqueue('noise', SEND_PRIORITY.NOISE);
+    sender.enqueue('mesh', SEND_PRIORITY.MESH);
+    sender.enqueue('call', SEND_PRIORITY.CALL);
+    expect(sent).toEqual(['spent']);
+
+    sender.clearTransient();
+    expect(sender.pending).toBe(1);
+
+    vi.advanceTimersByTime(10_000);
+    expect(sent).toEqual(['spent', 'noise']);
+  });
+
+  it('holds queued frames while paused and flushes them on resume', () => {
+    const { sent, sender } = build(1);
+    sender.enqueue('spent', SEND_PRIORITY.NOISE);
+    sender.pause();
+    sender.enqueue('held', SEND_PRIORITY.NOISE);
+
+    // A paused sender must not write into a socket that is gone: sendRaw
+    // swallows writes to a closed socket, so a drained frame is a lost frame.
+    vi.advanceTimersByTime(10_000);
+    expect(sent).toEqual(['spent']);
+    expect(sender.pending).toBe(1);
+
+    sender.resume();
+    vi.advanceTimersByTime(1_000);
+    expect(sent).toEqual(['spent', 'held']);
+  });
+
   it('paces signaling below the relay per-peer message limit', () => {
     // The relay drops anything past MSG_PER_SECOND_LIMIT (10); the remainder is
     // deliberate headroom for chat, which is never queued here.

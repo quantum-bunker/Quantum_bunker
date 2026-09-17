@@ -23,7 +23,9 @@ const DR_KEY_BYTES = 32;
 export interface NoiseFrame {
   kind: 'noise';
   to: string;
-  step: 1 | 2 | 3;
+  // Step 0 is a restart request, carrying no handshake material. Steps 1-3 are
+  // the Noise XX messages.
+  step: 0 | 1 | 2 | 3;
   data: string;
 }
 
@@ -104,14 +106,38 @@ export class PeerChannels {
     this.channels.set(peerId, channel);
     if (channel.initiator) {
       this.sendNoise(peerId, { kind: 'noise', to: peerId, step: 1, data: toBase64(channel.hs.writeMessage()) });
+      return;
     }
+    // Only the initiator ever sends message 1, so a responder that lost its
+    // channel — a reload, a new tab — would wait for a handshake the peer has
+    // no reason to restart. Asking for one is the only way back.
+    this.sendNoise(peerId, { kind: 'noise', to: peerId, step: 0, data: '' });
+  }
+
+  // Honoured only once our own handshake has settled: while we are still
+  // mid-handshake the message 1 we sent is in flight, and restarting here
+  // would invalidate the reply before it arrives.
+  private onRestartRequest(peerId: string): void {
+    if (!this.isInitiator(peerId)) return;
+    if (this.channels.get(peerId)?.phase === 'handshaking') return;
+    this.channels.delete(peerId);
+    this.ensureChannel(peerId);
   }
 
   onSignal(fromPeerId: string, frame: NoiseFrame): void {
     if (frame.to !== this.selfId) return;
 
+    if (frame.step === 0) {
+      this.onRestartRequest(fromPeerId);
+      return;
+    }
+
     let channel = this.channels.get(fromPeerId);
-    if (!channel || (frame.step === 1 && channel.phase !== 'handshaking')) {
+    // A message 1 always starts a fresh handshake. The peer only sends one
+    // after discarding its own channel, so replaying it into a half-finished
+    // HandshakeState throws and latches this side to `failed` — a state
+    // nothing recovers from, which strands every later message in the outbox.
+    if (!channel || frame.step === 1) {
       channel = this.newChannel(fromPeerId);
       this.channels.set(fromPeerId, channel);
     }

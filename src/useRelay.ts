@@ -224,7 +224,10 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   // left chat silently undecryptable. Chat itself never enters this queue — it
   // is sent immediately, in the headroom the pacing reserves.
   const sendSignal = useCallback((obj: Record<string, unknown>) => {
-    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN || !sessionId || !peerId) return;
+    if (!sessionId || !peerId) return;
+    // Deliberately queued even with the socket down. A handshake frame raised
+    // during a reconnect gap has no retry anywhere, and dropping it here left
+    // the channel half-open for the rest of the session.
     const envelope: RelayEnvelope = {
       sessionId,
       from: peerId,
@@ -378,13 +381,20 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const socket = new WebSocket(wsUrl);
 
-    channelsRef.current = new PeerChannels({
-      sessionId,
-      selfId: peerId,
-      sendNoise: (to: string, frame: NoiseFrame) => sendSignal({ ...frame }),
-      identity: identityRef.current ?? undefined,
-    });
-    setOwnFingerprint(channelsRef.current.ownFingerprint());
+    // Built once per session, not per socket. A double ratchet has nothing to
+    // do with the connection it was negotiated over, and rebuilding it on every
+    // reconnect silently desynchronised the two sides: the peer kept a `ready`
+    // channel and never resent message 1, so this side waited on a handshake
+    // that was never coming.
+    if (!channelsRef.current) {
+      channelsRef.current = new PeerChannels({
+        sessionId,
+        selfId: peerId,
+        sendNoise: (to: string, frame: NoiseFrame) => sendSignal({ ...frame }),
+        identity: identityRef.current ?? undefined,
+      });
+      setOwnFingerprint(channelsRef.current.ownFingerprint());
+    }
 
     const refreshCrypto = () => {
       const mgr = channelsRef.current;
@@ -702,6 +712,9 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
         setIsConnected(true);
         setIsPending(false);
         setError(null);
+        // Only now will the relay forward anything: resuming earlier would
+        // spend frames on a socket that has not been admitted to the session.
+        signalQueueRef.current?.resume();
         if (data.peerToken) {
           sessionStorage.setItem(`qb-peer-token-${sessionId}`, data.peerToken);
         }
@@ -772,8 +785,11 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
     socket.onclose = () => {
       setIsConnected(false);
-      // Queued signaling refers to a connection that no longer exists.
-      signalQueueRef.current?.clear();
+      // ICE for a torn-down connection is worthless, but handshake frames
+      // outlive the socket and are the one thing that must survive a
+      // reconnect; pausing keeps them out of a closed socket until we rejoin.
+      signalQueueRef.current?.clearTransient();
+      signalQueueRef.current?.pause();
       console.log('WS Disconnected');
       if (shouldReconnectRef.current) scheduleReconnect();
       else setConnectionState('offline');
@@ -1083,6 +1099,8 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       }
       socketRef.current?.close();
       p2pRef.current.reset();
+      channelsRef.current = null;
+      signalQueueRef.current?.clear();
     };
   }, [sessionId, peerId, connect]);
 

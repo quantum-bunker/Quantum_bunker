@@ -56,15 +56,17 @@ Authentication precedence:
 
 #### `accept_join` / `reject_join`
 ```typescript
-{ sessionId: string; targetPeerId: string; }
+{ peerId: string; }   // peerId = the peer being accepted/rejected
 ```
 Host-only. Moves a peer from `pendingPeers` to `peers` (accept) or drops them (reject).
+No `sessionId` is sent — the server uses the session already bound to the socket.
 
 #### `kick_peer`
 ```typescript
-{ sessionId: string; targetPeerId: string; }
+{ peerId: string; }   // peerId = the peer being kicked
 ```
 Host-only. Immediately closes the target peer's socket and removes them from the session.
+No `sessionId` is sent — the server uses the session already bound to the socket. Only applies in group sessions.
 
 #### `RelayEnvelope` (any relay message type)
 ```typescript
@@ -184,6 +186,35 @@ See `src/transport/send-queue.ts`.
 **Compatibility:** senders emit `candidates`; receivers accept both `candidates`
 and the single-candidate `candidate` shape. Keep accepting `candidate` for at
 least one version so peers on the previous build can still negotiate.
+
+### Noise Handshake
+
+One `kind: 'noise'` frame, addressed with `to`:
+```
+{ kind: 'noise', to, step: 0, data: '' }   Restart request — no handshake material
+{ kind: 'noise', to, step: 1, data }       Noise XX message 1  [initiator only]
+{ kind: 'noise', to, step: 2, data }       Noise XX message 2  [responder only]
+{ kind: 'noise', to, step: 3, data }       Noise XX message 3  [initiator only]
+```
+
+The initiator is the peer with the lexicographically smaller `peerId`, so only
+one side ever sends message 1. That makes a lost channel asymmetric to recover:
+an initiator rebuilds by sending message 1 again, but a responder that lost its
+channel (a reload, a new tab) has nothing to send and would wait forever. Step 0
+is how it asks. The initiator honours a step 0 only once its own handshake has
+settled — while it is still `handshaking`, the message 1 it already sent is in
+flight and restarting would invalidate the reply before it lands.
+
+A message 1 always starts a fresh handshake on the receiving side, including
+when that side is mid-handshake. Feeding it to a half-finished `HandshakeState`
+throws, which latches the channel to `failed`; nothing recovers from that, and
+`allReady()` then stays false for the rest of the session, silently diverting
+every message to the offline outbox with nothing shown to the user.
+
+Channels outlive the socket. A reconnect does not rebuild them — the double
+ratchet has no relationship to the connection it was negotiated over — and
+queued handshake frames survive a disconnect for the same reason. See
+`src/crypto/peer-channels.ts`.
 
 ### In-Chat Mutual Whitelist
 ```
