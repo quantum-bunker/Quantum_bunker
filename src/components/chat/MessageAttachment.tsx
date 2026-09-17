@@ -4,13 +4,43 @@ import { attachmentKind, attachmentDataUrl, resolveMime, formatBytes, FileAttach
 import { decryptFileData } from '../../file-crypto';
 import { toBase64 } from '../../crypto/noise-primitives';
 
+// A media element that failed to load. Without this the browser renders a dead
+// player and the app says nothing — which is exactly how a CSP that blocked
+// every data:/blob: attachment went unnoticed.
+function UnplayableAttachment({ att, url }: { att: FileAttachment; url: string }) {
+  return (
+    <div className="flex flex-col gap-1.5 px-3 py-2.5 border border-amber-500/30 bg-amber-500/5 min-w-[14rem]">
+      <div className="flex items-center gap-2 min-w-0">
+        <Ban size={16} className="text-amber-600 dark:text-amber-400 shrink-0" />
+        <span className="min-w-0">
+          <span className="block text-xs font-mono text-slate-700 dark:text-slate-200 truncate">{att.name}</span>
+          <span className="block text-[9px] font-mono text-amber-600 dark:text-amber-400">
+            This browser could not play the file. It downloaded intact — try saving it.
+          </span>
+        </span>
+      </div>
+      <a href={url} download={att.name} className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-amber-600 dark:text-amber-400 hover:underline">
+        <Download size={12} /> Download {formatBytes(att.size)}
+      </a>
+    </div>
+  );
+}
+
 export function renderAttachment(att: FileAttachment, urlOverride?: string): React.ReactNode {
+  return <PlayableAttachment att={att} urlOverride={urlOverride} />;
+}
+
+function PlayableAttachment({ att, urlOverride }: { att: FileAttachment; urlOverride?: string }) {
+  const [broken, setBroken] = useState(false);
   const kind = attachmentKind(resolveMime(att.mime, att.name));
   const url = urlOverride ?? attachmentDataUrl(att);
+
+  if (broken && kind !== 'file') return <UnplayableAttachment att={att} url={url} />;
+
   if (kind === 'image') {
     return (
       <a href={url} target="_blank" rel="noopener noreferrer" className="block">
-        <img src={url} alt={att.name} className="max-h-64 max-w-full rounded border border-black/10 dark:border-white/10 object-contain" />
+        <img src={url} alt={att.name} onError={() => setBroken(true)} className="max-h-64 max-w-full rounded border border-black/10 dark:border-white/10 object-contain" />
         <span className="block mt-1 text-[9px] font-mono text-slate-400 truncate">{att.name} · {formatBytes(att.size)}</span>
       </a>
     );
@@ -18,7 +48,7 @@ export function renderAttachment(att: FileAttachment, urlOverride?: string): Rea
   if (kind === 'audio') {
     return (
       <div className="flex flex-col gap-1">
-        <audio controls src={url} className="w-full max-w-xs h-9" />
+        <audio controls src={url} onError={() => setBroken(true)} className="w-full max-w-xs h-9" />
         <span className="text-[9px] font-mono text-slate-400 truncate">{att.name} · {formatBytes(att.size)}</span>
       </div>
     );
@@ -26,7 +56,7 @@ export function renderAttachment(att: FileAttachment, urlOverride?: string): Rea
   if (kind === 'video') {
     return (
       <div className="flex flex-col gap-1">
-        <video controls src={url} className="max-h-64 max-w-full rounded border border-black/10 dark:border-white/10" />
+        <video controls src={url} onError={() => setBroken(true)} className="max-h-64 max-w-full rounded border border-black/10 dark:border-white/10" />
         <span className="text-[9px] font-mono text-slate-400 truncate">{att.name} · {formatBytes(att.size)}</span>
       </div>
     );

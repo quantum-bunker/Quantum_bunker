@@ -6,7 +6,7 @@ import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
 import { CallSignal } from './transport/call-connection';
 import { useP2P } from './useP2P';
 import { useCall } from './useCall';
-import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
+import { requiresDirectPath, exceedsRelayFanout, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
 import { PacedSender, classifySignalPriority, SIGNAL_SENDS_PER_SECOND } from './transport/send-queue';
 import { randomId } from './random';
 import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
@@ -125,14 +125,40 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const pingTimestampRef = useRef<Map<string, number>>(new Map());
   const bytesInWindowRef = useRef<number>(0);
   const typingStopRef = useRef<number | null>(null);
+  // Every object URL this hook hands to the UI. Blobs stay alive for as long as
+  // their URL exists, so without revoking them a session leaks the full size of
+  // every file it sent or received.
+  const objectUrlsRef = useRef<Set<string>>(new Set());
   const typingSentAtRef = useRef<number>(0);
 
-  // Disappear messages after 5 mins
+  const releaseObjectUrl = useCallback((url: string | undefined) => {
+    if (!url || !objectUrlsRef.current.has(url)) return;
+    URL.revokeObjectURL(url);
+    objectUrlsRef.current.delete(url);
+  }, []);
+
+  // Disappear messages after 5 mins. A vanished message's blob must go with it —
+  // otherwise the bytes outlive the message that was supposed to self-destruct.
   useEffect(() => {
     const interval = setInterval(() => {
-      setMessages(prev => prev.filter(m => Date.now() - m.timestamp < 5 * 60 * 1000));
+      setMessages(prev => {
+        const next = prev.filter(m => Date.now() - m.timestamp < 5 * 60 * 1000);
+        if (next.length === prev.length) return prev;
+        const kept = new Set(next.map(m => m.fileUrl).filter(Boolean));
+        for (const m of prev) {
+          if (m.fileUrl && !kept.has(m.fileUrl)) releaseObjectUrl(m.fileUrl);
+        }
+        return next;
+      });
     }, 10000); // Check every 10s
     return () => clearInterval(interval);
+  }, [releaseObjectUrl]);
+
+  // Last resort on teardown: whatever is still held is unreachable once the hook
+  // is gone, so nothing can reference it afterwards.
+  useEffect(() => () => {
+    for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+    objectUrlsRef.current.clear();
   }, []);
 
   // IO load: reset byte window every second, express as % of 1MB reference
@@ -604,6 +630,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
               : m));
         } else {
           const url = URL.createObjectURL(entry.receiver.result());
+          objectUrlsRef.current.add(url);
           setMessages(prev => prev.map(m =>
             m.nonce === entry.nonce ? { ...m, fileUrl: url, progress: 1, status: 'delivered' } : m));
         }
@@ -881,6 +908,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     // The sender always sees their own file via the original File object URL,
     // even when it was password-locked for recipients.
     const url = URL.createObjectURL(file);
+    objectUrlsRef.current.add(url);
     setMessages(prev => [...prev, {
       ...initEnvelope, payload: '', file: { name: init.name, mime: init.mime, size: file.size, data: '' },
       fileUrl: url, locked: !!enc, progress: 0, status: 'sent', deliveredTo: [], seenBy: [],
@@ -922,7 +950,9 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     // transport memory); everything else takes the single-envelope path.
     // Password-locked large files also stream — the ciphertext is what gets
     // chunked (see sendFileStream / approach (a)).
-    const stream = requiresDirectPath(file.size);
+    // Past a few peers the per-recipient ciphertext fan-out makes even a small
+    // relayed file expensive, so the direct path is used regardless of size.
+    const stream = requiresDirectPath(file.size) || exceedsRelayFanout(activePeers.length);
     if (!(stream ? isWithinP2PFileLimit(file.size) : isWithinFileLimit(file.size))) {
       return { ok: false, error: 'File exceeds size limit' };
     }

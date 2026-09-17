@@ -20,6 +20,7 @@ import { MessageBubble } from './chat/MessageBubble';
 import { MessageComposer } from './chat/MessageComposer';
 import { PasswordModal, PasswordModalState } from './chat/PasswordModal';
 import { describeP2PFailure } from '../transport/p2p-policy';
+import { beginMediaPrompt, endMediaPrompt } from '../media-prompt';
 import { useTheme } from '../useTheme';
 
 interface ChatRoomProps {
@@ -81,6 +82,9 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  // Whether the user currently wants to be recording. Separate from isRecording
+  // because the two handlers race across the getUserMedia await.
+  const recordingIntentRef = useRef(false);
   const shareLink = `${window.location.origin}/join/${sessionId}`;
   const displayName = (id: string) => peerAliases[id] || id.replace('peer-', 'PEER_');
   const trimmedQuery = normalizeQuery(searchQuery);
@@ -218,12 +222,18 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
   };
 
   const startRecording = async () => {
-    if (isRecording || activePeers.length <= 1) return;
+    if (recordingIntentRef.current || activePeers.length <= 1) return;
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setFileError('Voice recording is not supported in this browser');
       return;
     }
+    // Held across the await so a release that lands while permission is still
+    // pending is not lost: the two handlers cannot see each other through state.
+    recordingIntentRef.current = true;
     const mime = chooseSupportedMime(VOICE_MIME_CANDIDATES, (m) => MediaRecorder.isTypeSupported(m));
+    // The permission prompt takes window focus, which would otherwise raise the
+    // privacy blackout over the app mid-recording.
+    beginMediaPrompt();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -232,6 +242,11 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           autoGainControl: true,
         },
       });
+      // Released while the prompt was up: never start, and drop the mic.
+      if (!recordingIntentRef.current) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
       audioStreamRef.current = stream;
       const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       audioChunksRef.current = [];
@@ -249,20 +264,32 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
     } catch {
+      recordingIntentRef.current = false;
       setFileError('Microphone access denied');
       audioStreamRef.current?.getTracks().forEach(t => t.stop());
       audioStreamRef.current = null;
+    } finally {
+      endMediaPrompt();
     }
   };
 
   const stopRecording = () => {
-    if (!isRecording) return;
+    // Guard on the ref, not on `isRecording`: getUserMedia is awaited before the
+    // state flips, so a quick tap (or the first-ever tap, which raises the
+    // permission prompt) reached here with isRecording still false and returned
+    // early — leaving the recorder running, the mic live, and nothing sent.
+    recordingIntentRef.current = false;
+    const recorder = mediaRecorderRef.current;
     setIsRecording(false);
-    mediaRecorderRef.current?.stop();
+    if (!recorder) return;
     mediaRecorderRef.current = null;
+    if (recorder.state !== 'inactive') recorder.stop();
   };
 
-  useEffect(() => () => { audioStreamRef.current?.getTracks().forEach(t => t.stop()); }, []);
+  useEffect(() => () => {
+    recordingIntentRef.current = false;
+    audioStreamRef.current?.getTracks().forEach(t => t.stop());
+  }, []);
   const copyId = () => { if (!isConnected) return; navigator.clipboard.writeText(sessionId); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   const copyShareLink = () => { navigator.clipboard.writeText(shareLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
 

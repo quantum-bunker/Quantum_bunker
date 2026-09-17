@@ -24,6 +24,19 @@ export const P2P_FILE_THRESHOLD_BYTES = 1024 * 1024;
 // Named here (not a magic number) per the same constants discipline.
 export const P2P_STREAM_HIGH_WATER_BYTES = 1 * 1024 * 1024;
 
+// Above this many peers, even a sub-threshold file is forced onto the direct
+// path. encryptForAll produces one ciphertext per recipient, so a relayed 1 MB
+// file in a ten-peer vault becomes a double-digit-megabyte single payload — well
+// within MAX_PAYLOAD_BYTES but far too heavy for the 512 MB / 0.1 CPU relay.
+// Large groups are also where the direct path pays off most.
+export const RELAY_FANOUT_MAX_PEERS = 3;
+
+// True when a file must take the direct path because of how many peers would
+// receive a relayed copy, independent of its size.
+export function exceedsRelayFanout(peerCount: number): boolean {
+  return peerCount > RELAY_FANOUT_MAX_PEERS;
+}
+
 // True when `byteSize` must take the direct path. Text messages and receipts
 // fall well under the threshold and keep relaying; files/images/audio/video
 // exceed it and are forced peer-to-peer.
