@@ -7,6 +7,7 @@ import { CallSignal } from './transport/call-connection';
 import { useP2P } from './useP2P';
 import { useCall } from './useCall';
 import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
+import { PacedSender, classifySignalPriority, SIGNAL_SENDS_PER_SECOND } from './transport/send-queue';
 import { randomId } from './random';
 import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
 import { loadContacts, upsertContact } from './contacts-store';
@@ -49,6 +50,20 @@ export interface LocalMessage extends RelayEnvelope {
   fileError?: string; // set when a streamed transfer is rejected or interrupted
 }
 
+// Server -> client control frames (everything that is not a relayed envelope).
+// Typed rather than left as the implicit `any` of JSON.parse so a protocol
+// change surfaces at compile time instead of as a runtime undefined.
+type ServerControlFrame = {
+  type?: string;
+  peerToken?: string;
+  isHost?: boolean;
+  peers?: string[];
+  isGroup?: boolean;
+  peerId?: string;
+  message?: string;
+  code?: string;
+};
+
 export function useRelay(sessionId: string | null, peerId: string | null, identity?: KeyPair | null) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -85,6 +100,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const peerMemberKeysRef = useRef<Record<string, { pk: string; label: string }>>({});
   peerMemberKeysRef.current = peerMemberKeys;
   const socketRef = useRef<WebSocket | null>(null);
+  const signalQueueRef = useRef<PacedSender<RelayEnvelope> | null>(null);
   // Reconnect bookkeeping. shouldReconnectRef is cleared on unmount and on
   // terminal server errors (destroyed / kicked / session gone) so we never loop
   // against a vault that no longer exists. connectRef always points at the latest
@@ -161,16 +177,28 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     return () => clearTimeout(id);
   }, [notice]);
 
+  // Every SIGNALING frame is paced through a priority queue rather than written
+  // straight to the socket. Unpaced, a call's ICE burst exceeded the relay's
+  // per-peer rate limit and the dropped frames included Noise handshakes, which
+  // left chat silently undecryptable. Chat itself never enters this queue — it
+  // is sent immediately, in the headroom the pacing reserves.
   const sendSignal = useCallback((obj: Record<string, unknown>) => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN || !sessionId || !peerId) return;
-    sendRaw({
+    const envelope: RelayEnvelope = {
       sessionId,
       from: peerId,
       type: EnvelopeType.SIGNALING,
       timestamp: Date.now(),
       nonce: randomId(),
       payload: JSON.stringify(obj),
-    });
+    };
+    if (!signalQueueRef.current) {
+      signalQueueRef.current = new PacedSender<RelayEnvelope>({
+        ratePerSecond: SIGNAL_SENDS_PER_SECOND,
+        send: (env) => sendRaw(env),
+      });
+    }
+    signalQueueRef.current.enqueue(envelope, classifySignalPriority(obj));
   }, [sessionId, peerId, sendRaw]);
 
   const p2p = useP2P({
@@ -618,7 +646,14 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
     socket.onmessage = (event) => {
       bytesInWindowRef.current += (event.data as string).length;
-      const data = JSON.parse(event.data);
+      // A malformed frame must not take the socket handler down with it — the
+      // P2P entry point already guards its JSON.parse the same way.
+      let data: ServerControlFrame;
+      try {
+        data = JSON.parse(event.data) as ServerControlFrame;
+      } catch {
+        return;
+      }
       
       if (data.type === 'joined') {
         setIsConnected(true);
@@ -642,7 +677,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
       if (data.type === 'peer_update') {
         const prev = activePeersRef.current;
-        const next = data.peers as string[];
+        const next = data.peers ?? [];
         activePeersRef.current = next;
         setActivePeers(next);
         setIsGroup(!!data.isGroup);
@@ -666,12 +701,13 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       }
 
       if (data.type === 'join_request') {
-        setJoinRequests(prev => [...prev, { peerId: data.peerId, message: data.message }]);
+        if (!data.peerId) return;
+        setJoinRequests(prev => [...prev, { peerId: data.peerId ?? '', message: data.message ?? '' }]);
         return;
       }
 
       if (data.type === 'error') {
-        setError(data.message);
+        setError(data.message ?? 'Relay error');
         if (data.code === 'RATE_LIMIT_EXCEEDED') {
           setNotice({ kind: 'warn', text: 'Sending too fast — the relay is throttling you. Slow down a moment.' });
         }
@@ -679,19 +715,26 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
         // backoff loop before closing so we do not re-dial a dead session.
         const TERMINAL_MESSAGES = ['Session destroyed', 'Join rejected by host', 'You have been kicked by the host', 'Session not found', 'Session full'];
         const TERMINAL_CODES = ['INVALID_PEER_TOKEN', 'INVALID_MEMBERSHIP'];
-        if (TERMINAL_MESSAGES.includes(data.message) || TERMINAL_CODES.includes(data.code)) {
+        if (TERMINAL_MESSAGES.includes(data.message ?? '') || TERMINAL_CODES.includes(data.code ?? '')) {
           shouldReconnectRef.current = false;
           socket.close();
         }
         return;
       }
 
-      // Any other message is a relayed envelope.
-      handleEnvelope(data as RelayEnvelope);
+      // Any other message is a relayed envelope. A throw inside the handler
+      // would otherwise unwind through onmessage and leave the socket wedged.
+      try {
+        handleEnvelope(data as unknown as RelayEnvelope);
+      } catch {
+        // A single bad envelope is dropped; the connection stays usable.
+      }
     };
 
     socket.onclose = () => {
       setIsConnected(false);
+      // Queued signaling refers to a connection that no longer exists.
+      signalQueueRef.current?.clear();
       console.log('WS Disconnected');
       if (shouldReconnectRef.current) scheduleReconnect();
       else setConnectionState('offline');
@@ -1115,5 +1158,5 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
+  return { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, directLinkFailureReason: p2p.failureReason, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
 }

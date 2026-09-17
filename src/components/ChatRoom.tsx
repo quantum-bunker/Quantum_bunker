@@ -11,6 +11,7 @@ import { VOICE_MIME_CANDIDATES, chooseSupportedMime, voiceFileName } from '../vo
 import { useContactVerification } from '../useContactVerification';
 import { KeyChangeWarning } from './ContactVerification';
 import CallView from './CallView';
+import { ErrorBoundary } from './ErrorBoundary';
 import { VaultSidebar } from './chat/VaultSidebar';
 import { JoinRequests } from './chat/JoinRequests';
 import { WhitelistRequests } from './chat/WhitelistRequests';
@@ -18,6 +19,7 @@ import { EventLogSidebar, LogEntry } from './chat/EventLogSidebar';
 import { MessageBubble } from './chat/MessageBubble';
 import { MessageComposer } from './chat/MessageComposer';
 import { PasswordModal, PasswordModalState } from './chat/PasswordModal';
+import { describeP2PFailure } from '../transport/p2p-policy';
 import { useTheme } from '../useTheme';
 
 interface ChatRoomProps {
@@ -34,7 +36,13 @@ interface ChatRoomProps {
 }
 
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset, identity }: ChatRoomProps) {
-  const { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
+  const { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, directLinkFailureReason, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
+
+  // One explanation, shared by the header chip and the composer banner, derived
+  // from what ICE actually observed rather than a fixed guess.
+  const directLinkHint = directLinkFailureReason
+    ? describeP2PFailure(directLinkFailureReason)
+    : 'A direct peer-to-peer link could not be established. Large files and video are never relayed through the server, so they cannot be sent until one is.';
   const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
   const { family } = useTheme();
   const classic = family === 'classic';
@@ -381,7 +389,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               : <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 font-bold ${classic ? '' : 'uppercase'}`} title="Routed through the blind relay."><Server size={11} /> {classic ? 'Relayed' : 'VIA_RELAY'}</span>
             )}
             {activePeers.length > 1 && directLinkFailed && (
-              <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-bold animate-pulse ${classic ? '' : 'uppercase'}`} title="A direct peer-to-peer link could not be established (no STUN/NAT path). Large files & video cannot be sent — they are never relayed through the server.">{classic ? <><Ban size={11} /> No direct link</> : <><Ban size={11} /> DIRECT_LINK_FAILED</>}</span>
+              <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-bold animate-pulse ${classic ? '' : 'uppercase'}`} title={directLinkHint}>{classic ? <><Ban size={11} /> No direct link</> : <><Ban size={11} /> DIRECT_LINK_FAILED</>}</span>
             )}
             <div className="flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar ml-2">
               {activePeers.map(p => (
@@ -495,6 +503,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           isPending={isPending}
           messagingBlocked={messagingBlocked}
           directLinkFailed={directLinkFailed}
+          directLinkHint={directLinkHint}
           attachMenuOpen={attachMenuOpen}
           onToggleAttachMenu={() => setAttachMenuOpen(o => !o)}
           onCloseAttachMenu={() => setAttachMenuOpen(false)}
@@ -521,7 +530,12 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         />
       )}
 
-      <CallView call={call} displayName={displayName} />
+      {/* CallView gets its own boundary: it is the newest and most failure-prone
+          tree, and a render throw there used to replace the entire app —
+          messaging included — because the only boundary was at the root. */}
+      <ErrorBoundary>
+        <CallView call={call} displayName={displayName} />
+      </ErrorBoundary>
 
       {call.callError && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[130] flex items-center gap-2 px-4 py-2 bg-red-500/90 text-white text-[10px] font-mono uppercase tracking-widest shadow-2xl">

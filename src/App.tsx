@@ -14,11 +14,14 @@ import { JoinLinkModal } from './components/JoinLinkModal';
 import { HelpModal } from './components/HelpModal';
 import { Toast, ToastState } from './components/Toast';
 import { ConnectivitySettings } from './components/ConnectivitySettings';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { useMediaPrompt } from './media-prompt';
 
 export default function App() {
   const { family, mode, setFamily, toggleMode } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [netMenuOpen, setNetMenuOpen] = useState(false);
+  const mediaPromptOpen = useMediaPrompt();
   const [view, setView] = useState<'home' | 'chat'>(() => {
     return sessionStorage.getItem('qb-sessionId') ? 'chat' : 'home';
   });
@@ -128,7 +131,10 @@ export default function App() {
 
   return (
     <div className={`qb-app h-screen w-full ${mode === 'dark' ? 'dark' : ''} selection:bg-cyan-500/30 flex flex-col overflow-hidden`}>
-      {(!isFocused && view === 'chat') && <div className="fixed inset-0 bg-black z-[99999] pointer-events-none flex items-center justify-center" />}
+      {/* Privacy blackout whenever the window loses focus. Suppressed around a
+          camera/mic permission prompt, which takes focus itself — granting
+          access would otherwise blank the screen mid-call. */}
+      {(!isFocused && view === 'chat' && !mediaPromptOpen) && <div className="fixed inset-0 bg-black z-[99999] pointer-events-none flex items-center justify-center" />}
 
       <header className="qb-surface h-16 border-b flex items-center justify-between px-4 sm:px-6 shrink-0 z-50">
         <div className="flex items-center gap-2 sm:gap-3 cursor-pointer" onClick={reset}>
@@ -308,7 +314,9 @@ export default function App() {
             </motion.div>
           ) : (
             <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex overflow-hidden">
-              <ChatRoom sessionId={sessionId!} sessionName={sessionName} peerId={peerId!} isHost={isHost} expiresAt={expiresAt} timeLeft={timeLeft} isExpired={isExpired} securityOptions={securityOptions} reset={reset} identity={identity.identity} />
+              <ErrorBoundary>
+                <ChatRoom sessionId={sessionId!} sessionName={sessionName} peerId={peerId!} isHost={isHost} expiresAt={expiresAt} timeLeft={timeLeft} isExpired={isExpired} securityOptions={securityOptions} reset={reset} identity={identity.identity} />
+              </ErrorBoundary>
             </motion.div>
           )}
         </AnimatePresence>

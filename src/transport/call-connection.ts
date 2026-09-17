@@ -5,15 +5,31 @@ import { isOfferer } from './webrtc-mesh';
 // SIGNALING envelope path as everything else (kind: 'call'); the relay never
 // inspects it. `call` discriminates the control verbs (invite/accept/…) from
 // the media-negotiation frames (sdp/ice) so one handler routes both.
+//
+// `candidates` carries a batch; `candidate` is the pre-batching single-candidate
+// shape, still accepted on receive so a peer running the previous version can
+// still negotiate. Batching matters because each candidate was its own relay
+// envelope, and a video call's trickle burst exceeded the server's per-peer rate
+// limit — which dropped Noise handshake frames and silently broke chat.
 export interface CallSignal {
   kind: 'call';
   call: 'invite' | 'accept' | 'decline' | 'cancel' | 'end' | 'busy' | 'sdp' | 'ice';
   to: string;
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
+  candidates?: RTCIceCandidateInit[];
 }
 
 export type CallConnectionState = 'connecting' | 'connected' | 'failed' | 'closed';
+
+// The relay fans SIGNALING out to EVERY peer in the vault, so a call frame
+// reaches people it was never addressed to. Without this check an invite rings
+// the whole vault and the fullscreen call modal covers chat for uninvolved
+// peers. WebRTCMesh.onSignal applies the identical rule to its own frames;
+// this is the call layer's copy, kept pure so it is directly testable.
+export function isAddressedTo(signal: Pick<CallSignal, 'to'>, selfId: string | null): boolean {
+  return !!selfId && signal.to === selfId;
+}
 
 interface CallConnectionOptions {
   selfId: string;
@@ -28,6 +44,11 @@ interface CallConnectionOptions {
 // the browser still adapts downward under congestion, but without a ceiling it
 // would chase resolution it cannot sustain, which is what makes calls stutter.
 const MAX_VIDEO_BITRATE = 1_500_000;
+
+// Outbound ICE candidates are buffered for this long and sent as one frame.
+// Mirrors CANDIDATE_BATCH_MS in webrtc-mesh.ts — both layers trickle over the
+// same rate-limited relay and must be paced the same way.
+const CANDIDATE_BATCH_MS = 60;
 
 // Wraps a single RTCPeerConnection carrying live media for one peer. Uses the
 // perfect-negotiation pattern so either side can (re)negotiate — adding a track,
@@ -46,6 +67,12 @@ export class CallConnection {
   // 'connecting' indefinitely. 20 s is long enough for trickle-ICE to finish
   // across most network conditions while still feeling responsive to the user.
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
+  private outboundCandidates: RTCIceCandidateInit[] = [];
+  private candidateTimer: ReturnType<typeof setTimeout> | null = null;
+  // Whether any server-reflexive candidate was gathered. Read by useCall to tell
+  // "the network returned no public address" apart from "no route between two
+  // known addresses", which need different advice.
+  gatheredReflexive = false;
 
   constructor(opts: CallConnectionOptions) {
     this.opts = opts;
@@ -59,7 +86,9 @@ export class CallConnection {
     }, 20_000);
 
     this.pc.onicecandidate = ({ candidate }) => {
-      if (candidate) this.opts.sendSignal({ call: 'ice', candidate: candidate.toJSON() });
+      if (!candidate) return;
+      if (candidate.type === 'srflx') this.gatheredReflexive = true;
+      this.queueCandidate(candidate.toJSON());
     };
 
     this.pc.ontrack = ({ track }) => {
@@ -94,6 +123,16 @@ export class CallConnection {
       if (s === 'connected' || s === 'completed') this.setState('connected');
       else if (s === 'failed') this.setState('failed');
     };
+  }
+
+  private queueCandidate(candidate: RTCIceCandidateInit): void {
+    this.outboundCandidates.push(candidate);
+    if (this.candidateTimer !== null) return;
+    this.candidateTimer = setTimeout(() => {
+      this.candidateTimer = null;
+      const batch = this.outboundCandidates.splice(0);
+      if (batch.length > 0) this.opts.sendSignal({ call: 'ice', candidates: batch });
+    }, CANDIDATE_BATCH_MS);
   }
 
   // Publishes the local capture tracks. Adding them fires negotiationneeded,
@@ -134,11 +173,14 @@ export class CallConnection {
           await this.pc.setLocalDescription();
           if (this.pc.localDescription) this.opts.sendSignal({ call: 'sdp', sdp: this.pc.localDescription });
         }
-      } else if (signal.call === 'ice' && signal.candidate) {
-        try {
-          await this.pc.addIceCandidate(signal.candidate);
-        } catch {
-          if (!this.ignoreOffer) throw new Error('ICE_ADD_FAILED');
+      } else if (signal.call === 'ice') {
+        const batch = signal.candidates ?? (signal.candidate ? [signal.candidate] : []);
+        for (const candidate of batch) {
+          try {
+            await this.pc.addIceCandidate(candidate);
+          } catch {
+            if (!this.ignoreOffer) throw new Error('ICE_ADD_FAILED');
+          }
         }
       }
     } catch {
@@ -158,6 +200,10 @@ export class CallConnection {
 
   close(): void {
     this.setState('closed');
+    if (this.candidateTimer !== null) {
+      clearTimeout(this.candidateTimer);
+      this.candidateTimer = null;
+    }
     for (const track of this.remoteStream.getTracks()) this.remoteStream.removeTrack(track);
     try {
       this.pc.getSenders().forEach(s => s.track?.stop());

@@ -7,7 +7,7 @@ import { formatBytes, MAX_FILE_BYTES, MAX_P2P_FILE_BYTES } from '../../file-tran
 export function MessageComposer({
   classic = false,
   input, onInputChange, onSubmit, onTyping, onPaste,
-  isConnected, peerCount, isPending, messagingBlocked, directLinkFailed,
+  isConnected, peerCount, isPending, messagingBlocked, directLinkFailed, directLinkHint,
   attachMenuOpen, onToggleAttachMenu, onCloseAttachMenu,
   fileInputRef, largeFileInputRef, onPickFiles, onLargeFiles, onOpenFilePicker, onOpenLargeFilePicker,
   isRecording, onStartRecording, onStopRecording,
@@ -24,6 +24,8 @@ export function MessageComposer({
   isPending: boolean;
   messagingBlocked: boolean;
   directLinkFailed: boolean;
+  // Why the direct link is unavailable, already worded for the user.
+  directLinkHint: string;
   attachMenuOpen: boolean;
   onToggleAttachMenu: () => void;
   onCloseAttachMenu: () => void;
@@ -56,7 +58,7 @@ export function MessageComposer({
       {peerCount > 1 && directLinkFailed && (
         <div className="qb-label max-w-5xl mx-auto mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-[10px]">
           <Ban size={12} className="shrink-0" />
-          <span>Direct P2P link unavailable — large files &amp; video cannot be sent until a peer-to-peer connection is established.</span>
+          <span>Direct link unavailable — large files &amp; video cannot be sent. {directLinkHint}</span>
         </div>
       )}
       <form onSubmit={onSubmit} className="h-12 flex gap-4 max-w-5xl mx-auto">
