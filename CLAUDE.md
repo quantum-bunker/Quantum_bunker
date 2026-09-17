@@ -279,9 +279,9 @@ GET    /api/health                 Health check
 ```
 join             { sessionId, peerId, message?, hostRecoveryToken?, peerToken?,
                    membershipToken?, joinProof? }
-accept_join      { sessionId, targetPeerId }                  [host only]
-reject_join      { sessionId, targetPeerId }                  [host only]
-kick_peer        { sessionId, targetPeerId }                  [host only]
+accept_join      { peerId }                                   [host only]
+reject_join      { peerId }                                   [host only]
+kick_peer        { peerId }                   [host only, group sessions]
 <RelayEnvelope>  Any envelope type for relay (PLAINTEXT refused)
 ```
 
