@@ -74,6 +74,12 @@ export async function setupApp() {
           directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
             'connect-src': connectSrc,
+            // Attachments are decrypted in the browser and handed to the DOM as
+            // data: URLs (small files) or blob: object URLs (streamed files).
+            // Without these, both fall back to default-src 'self' and the
+            // browser blocks every image/audio/video the app ever renders.
+            'media-src': ["'self'", 'data:', 'blob:'],
+            'img-src': ["'self'", 'data:', 'blob:'],
           },
         }
       : false, // Vite dev middleware needs inline scripts
