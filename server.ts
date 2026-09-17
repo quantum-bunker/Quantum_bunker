@@ -112,7 +112,20 @@ export async function setupApp() {
         return res.status(400).json({ error: result.error.issues });
       }
 
-      const session = await container.createSession.execute(result.data.expiresInSeconds, result.data.name, result.data.hostPublicKey);
+      const { session, existing } = await container.createSession.execute(result.data);
+
+      // A client-supplied id that is already open is a join, not a create. The
+      // response must withhold hostId and hostRecoveryToken: returning the
+      // existing vault's recovery token would hand host authority to anyone who
+      // guessed its id, for every vault in the relay. See ADR-007.
+      if (existing) {
+        return res.status(200).json({
+          sessionId: session.id,
+          expiresAt: session.expiresAt,
+          existing: true,
+        });
+      }
+
       res.status(201).json({
         sessionId: session.id,
         name: session.name,

@@ -125,6 +125,83 @@ describe('HTTP API Integration Tests', () => {
     expect(getRes.status).toBe(200);
   });
 
+  // ─── Direct mode: idempotent create on a client-supplied id ────────────
+
+  describe('POST /api/sessions with a client-supplied id', () => {
+    const uuid = () => crypto.randomUUID();
+
+    it('creates the vault on first use and returns host credentials', async () => {
+      const id = uuid();
+      const res = await request(app)
+        .post('/api/sessions')
+        .send({ id, maxPeers: 2, expiresInSeconds: 600 });
+
+      expect(res.status).toBe(201);
+      expect(res.body.sessionId).toBe(id);
+      expect(res.body.hostRecoveryToken).toBeDefined();
+      expect(res.body.existing).toBeUndefined();
+    });
+
+    it('never leaks host credentials when the id is already taken', async () => {
+      const id = uuid();
+      const first = await request(app)
+        .post('/api/sessions')
+        .send({ id, maxPeers: 2, expiresInSeconds: 600 });
+      expect(first.status).toBe(201);
+
+      const second = await request(app)
+        .post('/api/sessions')
+        .send({ id, maxPeers: 2, expiresInSeconds: 600 });
+
+      // The whole point of the idempotent create. Handing back the existing
+      // vault's recovery token would give host authority over any vault to
+      // anyone who guesses its id — see ADR-007.
+      expect(second.status).toBe(200);
+      expect(second.body.existing).toBe(true);
+      expect(second.body.sessionId).toBe(id);
+      expect(second.body.hostRecoveryToken).toBeUndefined();
+      expect(second.body.hostId).toBeUndefined();
+      expect(JSON.stringify(second.body)).not.toContain(first.body.hostRecoveryToken);
+      expect(JSON.stringify(second.body)).not.toContain(first.body.hostId);
+    });
+
+    it('leaves the original host in control after a colliding create', async () => {
+      const id = uuid();
+      const first = await request(app)
+        .post('/api/sessions')
+        .send({ id, expiresInSeconds: 600 });
+      await request(app).post('/api/sessions').send({ id, expiresInSeconds: 600 });
+
+      // The impostor has no token, so it cannot destroy the vault...
+      const denied = await request(app)
+        .delete(`/api/sessions/${id}`)
+        .set('x-host-token', 'guessed');
+      expect(denied.status).toBe(403);
+
+      // ...while the original host still can.
+      const allowed = await request(app)
+        .delete(`/api/sessions/${id}`)
+        .set('x-host-token', first.body.hostRecoveryToken);
+      expect(allowed.status).toBe(204);
+    });
+
+    it('rejects an id that is not a UUID', async () => {
+      // RelayEnvelopeSchema validates sessionId as a UUID, so a vault with any
+      // other id shape could never receive an envelope.
+      const res = await request(app)
+        .post('/api/sessions')
+        .send({ id: 'qb-pair-not-a-uuid', expiresInSeconds: 600 });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects a maxPeers below the two-peer floor', async () => {
+      const res = await request(app)
+        .post('/api/sessions')
+        .send({ id: uuid(), maxPeers: 1 });
+      expect(res.status).toBe(400);
+    });
+  });
+
   // ─── P1e: Refresh + create edge cases ──────────────────────────────────
 
   describe('refresh edge cases', () => {

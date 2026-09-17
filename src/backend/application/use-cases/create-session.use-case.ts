@@ -6,28 +6,52 @@ import { newToken } from '../../core/security';
 import { ISessionStore } from '../ports/session-store.port';
 import { IEventBus } from '../ports/event-bus.port';
 
+export interface CreateSessionOptions {
+  expiresInSeconds?: number;
+  name?: string;
+  hostPublicKey?: string;
+  // Direct mode supplies a vault id both peers derived from a shared secret.
+  // Whichever side arrives first creates it; the other gets `existing: true`.
+  id?: string;
+  maxPeers?: number;
+}
+
+export interface CreateSessionResult {
+  session: Session;
+  // True when `id` named a session that was already open. The caller must not
+  // hand the requester host credentials in that case — see ADR-007.
+  existing: boolean;
+}
+
 export class CreateSession {
   constructor(
     private readonly store: ISessionStore,
     private readonly eventBus: IEventBus
   ) {}
 
-  async execute(expiresInSeconds?: number, name?: string, hostPublicKey?: string): Promise<Session> {
+  async execute(options: CreateSessionOptions = {}): Promise<CreateSessionResult> {
+    const { expiresInSeconds, name, hostPublicKey, id, maxPeers } = options;
+
+    if (id) {
+      const existing = await this.store.get(id);
+      if (existing) return { session: existing, existing: true };
+    }
+
     if (await this.store.count() >= SESSION_LIMITS.MAX_ACTIVE_SESSIONS) {
       throw new DomainError('SESSION_CAPACITY_REACHED', 'Relay is at session capacity');
     }
 
     const ttl = expiresInSeconds
-      ? expiresInSeconds * 1000 
+      ? expiresInSeconds * 1000
       : SESSION_LIMITS.DEFAULT_TTL_MS;
-    
+
     const actualTtl = Math.min(ttl, SESSION_LIMITS.MAX_TTL_MS);
-    
+
     const now = Date.now();
     const hostId = `host-${uuidv4().slice(0, 8)}`;
     const hostRecoveryToken = uuidv4();
     const sess: Session = {
-      id: uuidv4(),
+      id: id || uuidv4(),
       name,
       createdAt: now,
       expiresAt: now + actualTtl,
@@ -42,7 +66,7 @@ export class CreateSession {
       },
       pendingPeers: {},
       status: SessionStatus.PENDING,
-      maxPeers: SESSION_LIMITS.MAX_PEERS,
+      maxPeers: clampPeers(maxPeers),
       participantCount: 1, // host is in peers from the start
       emptySince: null,
     };
@@ -56,6 +80,11 @@ export class CreateSession {
       payload: { expiresAt: sess.expiresAt },
     });
 
-    return sess;
+    return { session: sess, existing: false };
   }
+}
+
+function clampPeers(requested?: number): number {
+  if (!requested) return SESSION_LIMITS.MAX_PEERS;
+  return Math.min(Math.max(2, requested), SESSION_LIMITS.MAX_PEERS);
 }
