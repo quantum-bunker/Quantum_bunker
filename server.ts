@@ -12,6 +12,8 @@ import { CLEANUP_INTERVAL_MS, RELAY_LIMITS, REST_LIMITS, SESSION_LIMITS } from '
 import { safeEqual, trustProxy, torMode, onionAddress } from './src/backend/core/security';
 import { DomainError } from './src/backend/core/errors';
 import { createRateLimiter } from './src/backend/adapters/http/rate-limit.middleware';
+import { PROTOCOL_VERSION } from './src/shared/contracts/v1/protocol';
+import { APP_VERSION, BUILD_COMMIT } from './src/backend/core/version';
 
 export async function setupApp() {
   const app = express();
@@ -74,6 +76,12 @@ export async function setupApp() {
           directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
             'connect-src': connectSrc,
+            // Attachments are decrypted in the browser and handed to the DOM as
+            // data: URLs (small files) or blob: object URLs (streamed files).
+            // Without these, both fall back to default-src 'self' and the
+            // browser blocks every image/audio/video the app ever renders.
+            'media-src': ["'self'", 'data:', 'blob:'],
+            'img-src': ["'self'", 'data:', 'blob:'],
           },
         }
       : false, // Vite dev middleware needs inline scripts
@@ -85,8 +93,16 @@ export async function setupApp() {
   app.use('/api', generalLimiter);
 
   // API Routes
+  // Doubles as the deploy smoke test and the keep-alive ping target, so it
+  // reports which build is actually live rather than just that something is.
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: Date.now() });
+    res.json({
+      status: 'ok',
+      version: APP_VERSION,
+      commit: BUILD_COMMIT,
+      protocol: PROTOCOL_VERSION,
+      timestamp: Date.now(),
+    });
   });
 
   app.post('/api/sessions', createLimiter, async (req, res) => {
@@ -97,12 +113,10 @@ export async function setupApp() {
       }
 
       const session = await container.createSession.execute(result.data.expiresInSeconds, result.data.name, result.data.hostPublicKey);
-      console.log(`[API] Created session: ${session.id}`);
       res.status(201).json({
         sessionId: session.id,
         name: session.name,
         expiresAt: session.expiresAt,
-        publicKey: 'placeholder-phase-2',
         hostId: session.hostId,
         hostRecoveryToken: session.hostRecoveryToken
       });
@@ -118,10 +132,8 @@ export async function setupApp() {
     const id = req.params.id.trim();
     const session = await container.store.get(id);
     if (!session) {
-      console.warn(`[API] Session not found: ${id}`);
       return res.status(404).json({ error: 'Session not found' });
     }
-    console.log(`[API] Fetched session: ${id}`);
     // Public metadata only — never the peer map, host identity, or any token.
     const info: PublicSessionInfo = {
       id: session.id,
@@ -171,7 +183,6 @@ export async function setupApp() {
     }
     await container.store.delete(id);
     container.transport.disconnectSession(id);
-    console.log(`[API] Destroyed session: ${id}`);
     res.status(204).send();
   });
 

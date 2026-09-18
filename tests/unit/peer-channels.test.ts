@@ -39,6 +39,63 @@ describe('PeerChannels', () => {
     expect(m['peer-a'].decryptFrom('peer-b', reply)).toBe('hi alice');
   });
 
+  it('recovers when the responder loses its channel but the initiator does not', () => {
+    // peer-a < peer-b, so peer-a is the initiator and is the only side that
+    // ever sends message 1. A responder reload used to strand the pair: it sat
+    // in `handshaking` forever waiting on a handshake peer-a saw no reason to
+    // restart, and every message silently diverted to the outbox.
+    const managers: Record<string, PeerChannels> = {};
+    const make = (id: string) => new PeerChannels({
+      sessionId: 'test-session',
+      selfId: id,
+      sendNoise: (to: string, frame: NoiseFrame) => managers[to]?.onSignal(id, frame),
+    });
+
+    managers['peer-a'] = make('peer-a');
+    managers['peer-b'] = make('peer-b');
+    managers['peer-a'].ensureChannel('peer-b');
+    managers['peer-b'].ensureChannel('peer-a');
+    expect(managers['peer-a'].isReady('peer-b')).toBe(true);
+
+    managers['peer-b'] = make('peer-b');
+    managers['peer-b'].ensureChannel('peer-a');
+
+    expect(managers['peer-b'].isReady('peer-a')).toBe(true);
+    expect(managers['peer-a'].isReady('peer-b')).toBe(true);
+    const payload = managers['peer-a'].encryptForAll('after the reload');
+    expect(managers['peer-b'].decryptFrom('peer-a', payload)).toBe('after the reload');
+  });
+
+  it('restarts on a second message 1 instead of latching to failed', () => {
+    // peer-a restarts before peer-b's message 2 lands, so peer-b sees a fresh
+    // message 1 while still mid-handshake. Replaying it into the half-finished
+    // HandshakeState threw, and the channel stayed `failed` for good.
+    let initiator: PeerChannels | null = null;
+    const responder = new PeerChannels({
+      sessionId: 'test-session',
+      selfId: 'peer-b',
+      sendNoise: (_to: string, frame: NoiseFrame) => initiator?.onSignal('peer-b', frame),
+    });
+    const newInitiator = () => new PeerChannels({
+      sessionId: 'test-session',
+      selfId: 'peer-a',
+      sendNoise: (_to: string, frame: NoiseFrame) => responder.onSignal('peer-a', frame),
+    });
+
+    // First attempt: the reply is dropped, leaving the responder mid-handshake.
+    newInitiator().ensureChannel('peer-b');
+    expect(responder.isReady('peer-a')).toBe(false);
+
+    const second = newInitiator();
+    initiator = second;
+    second.ensureChannel('peer-b');
+
+    expect(responder.isReady('peer-a')).toBe(true);
+    expect(second.isReady('peer-b')).toBe(true);
+    const payload = second.encryptForAll('recovered');
+    expect(responder.decryptFrom('peer-a', payload)).toBe('recovered');
+  });
+
   it('agrees on the same safety number on both sides', () => {
     const m = mesh('peer-a', 'peer-b');
     connect(m);

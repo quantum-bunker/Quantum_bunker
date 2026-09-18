@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { setupApp } from '../../server';
 import { Application } from 'express';
+import { PROTOCOL_VERSION } from '../../src/shared/contracts/v1/protocol';
 
 describe('HTTP API Integration Tests', () => {
   let app: Application;
@@ -24,6 +25,15 @@ describe('HTTP API Integration Tests', () => {
     const res = await request(app).get('/api/health');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+  });
+
+  it('reports the running build so a deploy can confirm which version is live', async () => {
+    const res = await request(app).get('/api/health');
+    // Matches the version in package.json, injected at startup.
+    expect(res.body.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(res.body.protocol).toBe(PROTOCOL_VERSION);
+    expect(typeof res.body.commit).toBe('string');
+    expect(typeof res.body.timestamp).toBe('number');
   });
 
   it('should create a new session', async () => {

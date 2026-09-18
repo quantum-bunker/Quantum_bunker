@@ -13,7 +13,7 @@ export type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
 // Mirrors RELAY_LIMITS.MAX_FILE_BYTES in src/backend/core/constants.ts. The
 // frontend cannot import backend modules across the hexagonal boundary, so the
 // value is duplicated here with the backend kept as the source of truth.
-export const MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_FILE_BYTES = 1024 * 1024;
 
 // Mirrors RELAY_LIMITS.MAX_P2P_FILE_BYTES and RELAY_LIMITS.FILE_CHUNK_BYTES.
 // The direct P2P path streams files in fixed chunks and never relays the bytes,
@@ -56,6 +56,18 @@ const EXT_MIME: Record<string, string> = {
   wav: 'audio/wav',
 };
 
+// webm and ogg are container formats used by both audio and video, and EXT_MIME
+// resolves them to video/*. A voice note that arrives with a generic MIME would
+// therefore render in a <video> element with a blank picture. Recordings are
+// named by voiceFileName(), so the name identifies them unambiguously.
+const VOICE_NAME_PREFIX = 'voice-';
+const VOICE_EXT_MIME: Record<string, string> = {
+  webm: 'audio/webm',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  mp4: 'audio/mp4',
+};
+
 // A specific, valid MIME is kept verbatim. Only when the provided value is
 // empty or a generic octet-stream do we try to infer a better type from the
 // file extension — otherwise video/audio playback breaks on streamed files.
@@ -65,6 +77,7 @@ export function resolveMime(mime: string, name: string): string {
   const dot = name.lastIndexOf('.');
   if (dot >= 0) {
     const ext = name.slice(dot + 1).toLowerCase();
+    if (name.startsWith(VOICE_NAME_PREFIX) && VOICE_EXT_MIME[ext]) return VOICE_EXT_MIME[ext];
     if (EXT_MIME[ext]) return EXT_MIME[ext];
   }
   return mime || 'application/octet-stream';

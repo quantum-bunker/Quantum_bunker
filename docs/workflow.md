@@ -84,6 +84,49 @@ feature/* → develop → staging → main
 
 Note: Free hosting tiers (Render, Railway free) spin down after ~15 min idle. These are suitable for staging/demo but not production.
 
+### Keeping the free-tier instance warm
+
+Render's free tier spins an instance down after 15 minutes without traffic, and
+the next request pays a 30-60 second cold start. It also allows 750 instance
+hours per month per workspace against a ~730-hour month, so a single always-on
+service fits with roughly 20 hours to spare.
+
+**Set up an external pinger against `/api/health` every ~10 minutes.** It has to
+be external — a sleeping service cannot wake itself.
+
+- [UptimeRobot](https://uptimerobot.com) free tier, or [cron-job.org](https://cron-job.org)
+- Target: `https://<your-host>/api/health`
+- Interval: 10 minutes (under the 15-minute idle window, with margin)
+
+`/api/health` is already the deploy smoke-test endpoint, so this adds no new
+surface. It returns `{ status, version, commit, protocol, timestamp }` and
+touches no session state.
+
+**Do not use a GitHub Actions cron for this.** Scheduled workflows are delayed
+under load — often well past the idle window — and GitHub disables them
+automatically after 60 days without repository activity, so the keep-alive would
+stop silently.
+
+The client also handles a cold start on its own: `useRelay` retries the join
+with exponential backoff and, once the retries pass the point where a healthy
+relay would have answered, tells the user the relay is waking rather than
+leaving a spinner that looks identical to a dead relay. Sessions do not survive
+a restart — that is by design, and the message says so.
+
+### Versioning and releases
+
+`package.json` is the single source of truth for the version. Bumping it and
+merging to `main` triggers `.github/workflows/release.yml`, which tags `vX.Y.Z`
+and creates a GitHub release from the matching `CHANGELOG.md` section.
+
+That workflow needs `contents: write`, unlike the other workflows here, because
+creating a tag writes to the repository.
+
+The version is injected into the frontend at build time (Vite `define`) and read
+by the backend at startup, so the UI footer and `/api/health` always agree with
+`package.json`. The production smoke test compares the live version against the
+build it just deployed.
+
 ---
 
 ## Review Policy

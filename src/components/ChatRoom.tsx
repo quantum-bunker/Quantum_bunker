@@ -11,6 +11,7 @@ import { VOICE_MIME_CANDIDATES, chooseSupportedMime, voiceFileName } from '../vo
 import { useContactVerification } from '../useContactVerification';
 import { KeyChangeWarning } from './ContactVerification';
 import CallView from './CallView';
+import { ErrorBoundary } from './ErrorBoundary';
 import { VaultSidebar } from './chat/VaultSidebar';
 import { JoinRequests } from './chat/JoinRequests';
 import { WhitelistRequests } from './chat/WhitelistRequests';
@@ -18,6 +19,8 @@ import { EventLogSidebar, LogEntry } from './chat/EventLogSidebar';
 import { MessageBubble } from './chat/MessageBubble';
 import { MessageComposer } from './chat/MessageComposer';
 import { PasswordModal, PasswordModalState } from './chat/PasswordModal';
+import { describeP2PFailure } from '../transport/p2p-policy';
+import { beginMediaPrompt, endMediaPrompt } from '../media-prompt';
 import { useTheme } from '../useTheme';
 
 interface ChatRoomProps {
@@ -34,7 +37,13 @@ interface ChatRoomProps {
 }
 
 function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft, isExpired, securityOptions, reset, identity }: ChatRoomProps) {
-  const { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
+  const { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed, directLinkFailureReason, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer } = useRelay(sessionId, peerId, identity);
+
+  // One explanation, shared by the header chip and the composer banner, derived
+  // from what ICE actually observed rather than a fixed guess.
+  const directLinkHint = directLinkFailureReason
+    ? describeP2PFailure(directLinkFailureReason)
+    : 'A direct peer-to-peer link could not be established. Large files and video are never relayed through the server, so they cannot be sent until one is.';
   const { statuses: verifyStatuses, changedPeers, verify, unverify } = useContactVerification(sessionId, fingerprints);
   const { family } = useTheme();
   const classic = family === 'classic';
@@ -73,6 +82,9 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  // Whether the user currently wants to be recording. Separate from isRecording
+  // because the two handlers race across the getUserMedia await.
+  const recordingIntentRef = useRef(false);
   const shareLink = `${window.location.origin}/join/${sessionId}`;
   const displayName = (id: string) => peerAliases[id] || id.replace('peer-', 'PEER_');
   const trimmedQuery = normalizeQuery(searchQuery);
@@ -210,12 +222,18 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
   };
 
   const startRecording = async () => {
-    if (isRecording || activePeers.length <= 1) return;
+    if (recordingIntentRef.current || activePeers.length <= 1) return;
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setFileError('Voice recording is not supported in this browser');
       return;
     }
+    // Held across the await so a release that lands while permission is still
+    // pending is not lost: the two handlers cannot see each other through state.
+    recordingIntentRef.current = true;
     const mime = chooseSupportedMime(VOICE_MIME_CANDIDATES, (m) => MediaRecorder.isTypeSupported(m));
+    // The permission prompt takes window focus, which would otherwise raise the
+    // privacy blackout over the app mid-recording.
+    beginMediaPrompt();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -224,6 +242,11 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           autoGainControl: true,
         },
       });
+      // Released while the prompt was up: never start, and drop the mic.
+      if (!recordingIntentRef.current) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
       audioStreamRef.current = stream;
       const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       audioChunksRef.current = [];
@@ -241,20 +264,32 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
     } catch {
+      recordingIntentRef.current = false;
       setFileError('Microphone access denied');
       audioStreamRef.current?.getTracks().forEach(t => t.stop());
       audioStreamRef.current = null;
+    } finally {
+      endMediaPrompt();
     }
   };
 
   const stopRecording = () => {
-    if (!isRecording) return;
+    // Guard on the ref, not on `isRecording`: getUserMedia is awaited before the
+    // state flips, so a quick tap (or the first-ever tap, which raises the
+    // permission prompt) reached here with isRecording still false and returned
+    // early — leaving the recorder running, the mic live, and nothing sent.
+    recordingIntentRef.current = false;
+    const recorder = mediaRecorderRef.current;
     setIsRecording(false);
-    mediaRecorderRef.current?.stop();
+    if (!recorder) return;
     mediaRecorderRef.current = null;
+    if (recorder.state !== 'inactive') recorder.stop();
   };
 
-  useEffect(() => () => { audioStreamRef.current?.getTracks().forEach(t => t.stop()); }, []);
+  useEffect(() => () => {
+    recordingIntentRef.current = false;
+    audioStreamRef.current?.getTracks().forEach(t => t.stop());
+  }, []);
   const copyId = () => { if (!isConnected) return; navigator.clipboard.writeText(sessionId); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   const copyShareLink = () => { navigator.clipboard.writeText(shareLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
 
@@ -381,7 +416,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
               : <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 font-bold ${classic ? '' : 'uppercase'}`} title="Routed through the blind relay."><Server size={11} /> {classic ? 'Relayed' : 'VIA_RELAY'}</span>
             )}
             {activePeers.length > 1 && directLinkFailed && (
-              <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-bold animate-pulse ${classic ? '' : 'uppercase'}`} title="A direct peer-to-peer link could not be established (no STUN/NAT path). Large files & video cannot be sent — they are never relayed through the server.">{classic ? <><Ban size={11} /> No direct link</> : <><Ban size={11} /> DIRECT_LINK_FAILED</>}</span>
+              <span className={`flex items-center gap-1 px-2 py-0.5 rounded-sm bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-bold animate-pulse ${classic ? '' : 'uppercase'}`} title={directLinkHint}>{classic ? <><Ban size={11} /> No direct link</> : <><Ban size={11} /> DIRECT_LINK_FAILED</>}</span>
             )}
             <div className="flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar ml-2">
               {activePeers.map(p => (
@@ -495,6 +530,7 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
           isPending={isPending}
           messagingBlocked={messagingBlocked}
           directLinkFailed={directLinkFailed}
+          directLinkHint={directLinkHint}
           attachMenuOpen={attachMenuOpen}
           onToggleAttachMenu={() => setAttachMenuOpen(o => !o)}
           onCloseAttachMenu={() => setAttachMenuOpen(false)}
@@ -521,7 +557,12 @@ function ChatRoom({ sessionId, sessionName, peerId, isHost, expiresAt, timeLeft,
         />
       )}
 
-      <CallView call={call} displayName={displayName} />
+      {/* CallView gets its own boundary: it is the newest and most failure-prone
+          tree, and a render throw there used to replace the entire app —
+          messaging included — because the only boundary was at the root. */}
+      <ErrorBoundary>
+        <CallView call={call} displayName={displayName} />
+      </ErrorBoundary>
 
       {call.callError && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[130] flex items-center gap-2 px-4 py-2 bg-red-500/90 text-white text-[10px] font-mono uppercase tracking-widest shadow-2xl">

@@ -6,7 +6,8 @@ import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
 import { CallSignal } from './transport/call-connection';
 import { useP2P } from './useP2P';
 import { useCall } from './useCall';
-import { requiresDirectPath, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
+import { requiresDirectPath, exceedsRelayFanout, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
+import { PacedSender, classifySignalPriority, SIGNAL_SENDS_PER_SECOND } from './transport/send-queue';
 import { randomId } from './random';
 import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
 import { loadContacts, upsertContact } from './contacts-store';
@@ -49,6 +50,25 @@ export interface LocalMessage extends RelayEnvelope {
   fileError?: string; // set when a streamed transfer is rejected or interrupted
 }
 
+// Server -> client control frames (everything that is not a relayed envelope).
+// Typed rather than left as the implicit `any` of JSON.parse so a protocol
+// change surfaces at compile time instead of as a runtime undefined.
+type ServerControlFrame = {
+  type?: string;
+  peerToken?: string;
+  isHost?: boolean;
+  peers?: string[];
+  isGroup?: boolean;
+  peerId?: string;
+  message?: string;
+  code?: string;
+};
+
+// Backoff is 1s, 2s, 4s, 8s — so by the fourth attempt roughly 15 seconds have
+// passed. A relay that is merely busy answers well inside that; one that is
+// cold-starting does not. Past this, the UI explains rather than just spinning.
+const COLD_START_ATTEMPT_HINT = 3;
+
 export function useRelay(sessionId: string | null, peerId: string | null, identity?: KeyPair | null) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -85,6 +105,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const peerMemberKeysRef = useRef<Record<string, { pk: string; label: string }>>({});
   peerMemberKeysRef.current = peerMemberKeys;
   const socketRef = useRef<WebSocket | null>(null);
+  const signalQueueRef = useRef<PacedSender<RelayEnvelope> | null>(null);
   // Reconnect bookkeeping. shouldReconnectRef is cleared on unmount and on
   // terminal server errors (destroyed / kicked / session gone) so we never loop
   // against a vault that no longer exists. connectRef always points at the latest
@@ -109,14 +130,40 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const pingTimestampRef = useRef<Map<string, number>>(new Map());
   const bytesInWindowRef = useRef<number>(0);
   const typingStopRef = useRef<number | null>(null);
+  // Every object URL this hook hands to the UI. Blobs stay alive for as long as
+  // their URL exists, so without revoking them a session leaks the full size of
+  // every file it sent or received.
+  const objectUrlsRef = useRef<Set<string>>(new Set());
   const typingSentAtRef = useRef<number>(0);
 
-  // Disappear messages after 5 mins
+  const releaseObjectUrl = useCallback((url: string | undefined) => {
+    if (!url || !objectUrlsRef.current.has(url)) return;
+    URL.revokeObjectURL(url);
+    objectUrlsRef.current.delete(url);
+  }, []);
+
+  // Disappear messages after 5 mins. A vanished message's blob must go with it —
+  // otherwise the bytes outlive the message that was supposed to self-destruct.
   useEffect(() => {
     const interval = setInterval(() => {
-      setMessages(prev => prev.filter(m => Date.now() - m.timestamp < 5 * 60 * 1000));
+      setMessages(prev => {
+        const next = prev.filter(m => Date.now() - m.timestamp < 5 * 60 * 1000);
+        if (next.length === prev.length) return prev;
+        const kept = new Set(next.map(m => m.fileUrl).filter(Boolean));
+        for (const m of prev) {
+          if (m.fileUrl && !kept.has(m.fileUrl)) releaseObjectUrl(m.fileUrl);
+        }
+        return next;
+      });
     }, 10000); // Check every 10s
     return () => clearInterval(interval);
+  }, [releaseObjectUrl]);
+
+  // Last resort on teardown: whatever is still held is unreachable once the hook
+  // is gone, so nothing can reference it afterwards.
+  useEffect(() => () => {
+    for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+    objectUrlsRef.current.clear();
   }, []);
 
   // IO load: reset byte window every second, express as % of 1MB reference
@@ -147,6 +194,16 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     const attempt = reconnectAttemptsRef.current;
     const delay = Math.min(1000 * 2 ** attempt, 15000);
     reconnectAttemptsRef.current = attempt + 1;
+    // The host spins the instance down after idle and takes 30-60s to come back,
+    // and every deploy restarts it. Once the retries have run past the point
+    // where a healthy relay would have answered, say so — the alternative is a
+    // silent "reconnecting" spinner that looks identical to a dead relay.
+    if (attempt >= COLD_START_ATTEMPT_HINT) {
+      setNotice({
+        kind: 'warn',
+        text: 'The relay is waking up — this takes up to a minute after it has been idle. Vaults created before it slept are gone; a new one will be needed.',
+      });
+    }
     setConnectionState('reconnecting');
     reconnectTimerRef.current = window.setTimeout(() => {
       reconnectTimerRef.current = null;
@@ -161,16 +218,31 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     return () => clearTimeout(id);
   }, [notice]);
 
+  // Every SIGNALING frame is paced through a priority queue rather than written
+  // straight to the socket. Unpaced, a call's ICE burst exceeded the relay's
+  // per-peer rate limit and the dropped frames included Noise handshakes, which
+  // left chat silently undecryptable. Chat itself never enters this queue — it
+  // is sent immediately, in the headroom the pacing reserves.
   const sendSignal = useCallback((obj: Record<string, unknown>) => {
-    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN || !sessionId || !peerId) return;
-    sendRaw({
+    if (!sessionId || !peerId) return;
+    // Deliberately queued even with the socket down. A handshake frame raised
+    // during a reconnect gap has no retry anywhere, and dropping it here left
+    // the channel half-open for the rest of the session.
+    const envelope: RelayEnvelope = {
       sessionId,
       from: peerId,
       type: EnvelopeType.SIGNALING,
       timestamp: Date.now(),
       nonce: randomId(),
       payload: JSON.stringify(obj),
-    });
+    };
+    if (!signalQueueRef.current) {
+      signalQueueRef.current = new PacedSender<RelayEnvelope>({
+        ratePerSecond: SIGNAL_SENDS_PER_SECOND,
+        send: (env) => sendRaw(env),
+      });
+    }
+    signalQueueRef.current.enqueue(envelope, classifySignalPriority(obj));
   }, [sessionId, peerId, sendRaw]);
 
   const p2p = useP2P({
@@ -309,13 +381,20 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const socket = new WebSocket(wsUrl);
 
-    channelsRef.current = new PeerChannels({
-      sessionId,
-      selfId: peerId,
-      sendNoise: (to: string, frame: NoiseFrame) => sendSignal({ ...frame }),
-      identity: identityRef.current ?? undefined,
-    });
-    setOwnFingerprint(channelsRef.current.ownFingerprint());
+    // Built once per session, not per socket. A double ratchet has nothing to
+    // do with the connection it was negotiated over, and rebuilding it on every
+    // reconnect silently desynchronised the two sides: the peer kept a `ready`
+    // channel and never resent message 1, so this side waited on a handshake
+    // that was never coming.
+    if (!channelsRef.current) {
+      channelsRef.current = new PeerChannels({
+        sessionId,
+        selfId: peerId,
+        sendNoise: (to: string, frame: NoiseFrame) => sendSignal({ ...frame }),
+        identity: identityRef.current ?? undefined,
+      });
+      setOwnFingerprint(channelsRef.current.ownFingerprint());
+    }
 
     const refreshCrypto = () => {
       const mgr = channelsRef.current;
@@ -576,6 +655,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
               : m));
         } else {
           const url = URL.createObjectURL(entry.receiver.result());
+          objectUrlsRef.current.add(url);
           setMessages(prev => prev.map(m =>
             m.nonce === entry.nonce ? { ...m, fileUrl: url, progress: 1, status: 'delivered' } : m));
         }
@@ -595,9 +675,10 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     handleBinaryRef.current = handleBinary;
 
     socket.onopen = () => {
-      console.log('WS Connected');
+      const wasRetrying = reconnectAttemptsRef.current > 0;
       reconnectAttemptsRef.current = 0;
       setConnectionState('online');
+      if (wasRetrying) setNotice({ kind: 'warn', text: 'Relay reconnected.' });
       const msg = localStorage.getItem('qb-join-msg') || 'Hello';
       const recoveryToken = localStorage.getItem(`qb-recovery-${sessionId}`);
       const peerToken = sessionStorage.getItem(`qb-peer-token-${sessionId}`);
@@ -618,20 +699,26 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
     socket.onmessage = (event) => {
       bytesInWindowRef.current += (event.data as string).length;
-      const data = JSON.parse(event.data);
+      // A malformed frame must not take the socket handler down with it — the
+      // P2P entry point already guards its JSON.parse the same way.
+      let data: ServerControlFrame;
+      try {
+        data = JSON.parse(event.data) as ServerControlFrame;
+      } catch {
+        return;
+      }
       
       if (data.type === 'joined') {
         setIsConnected(true);
         setIsPending(false);
         setError(null);
+        // Only now will the relay forward anything: resuming earlier would
+        // spend frames on a socket that has not been admitted to the session.
+        signalQueueRef.current?.resume();
         if (data.peerToken) {
           sessionStorage.setItem(`qb-peer-token-${sessionId}`, data.peerToken);
         }
         // Server might tell us we are host via recovery
-        if (data.isHost) {
-          // This would ideally update useSession, but we can at least log it or handle local state if needed
-          console.log('Joined as Host (recovered)');
-        }
         return;
       }
 
@@ -642,7 +729,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
       if (data.type === 'peer_update') {
         const prev = activePeersRef.current;
-        const next = data.peers as string[];
+        const next = data.peers ?? [];
         activePeersRef.current = next;
         setActivePeers(next);
         setIsGroup(!!data.isGroup);
@@ -666,12 +753,13 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       }
 
       if (data.type === 'join_request') {
-        setJoinRequests(prev => [...prev, { peerId: data.peerId, message: data.message }]);
+        if (!data.peerId) return;
+        setJoinRequests(prev => [...prev, { peerId: data.peerId ?? '', message: data.message ?? '' }]);
         return;
       }
 
       if (data.type === 'error') {
-        setError(data.message);
+        setError(data.message ?? 'Relay error');
         if (data.code === 'RATE_LIMIT_EXCEEDED') {
           setNotice({ kind: 'warn', text: 'Sending too fast — the relay is throttling you. Slow down a moment.' });
         }
@@ -679,27 +767,38 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
         // backoff loop before closing so we do not re-dial a dead session.
         const TERMINAL_MESSAGES = ['Session destroyed', 'Join rejected by host', 'You have been kicked by the host', 'Session not found', 'Session full'];
         const TERMINAL_CODES = ['INVALID_PEER_TOKEN', 'INVALID_MEMBERSHIP'];
-        if (TERMINAL_MESSAGES.includes(data.message) || TERMINAL_CODES.includes(data.code)) {
+        if (TERMINAL_MESSAGES.includes(data.message ?? '') || TERMINAL_CODES.includes(data.code ?? '')) {
           shouldReconnectRef.current = false;
           socket.close();
         }
         return;
       }
 
-      // Any other message is a relayed envelope.
-      handleEnvelope(data as RelayEnvelope);
+      // Any other message is a relayed envelope. A throw inside the handler
+      // would otherwise unwind through onmessage and leave the socket wedged.
+      try {
+        handleEnvelope(data as unknown as RelayEnvelope);
+      } catch {
+        // A single bad envelope is dropped; the connection stays usable.
+      }
     };
 
     socket.onclose = () => {
       setIsConnected(false);
+      // ICE for a torn-down connection is worthless, but handshake frames
+      // outlive the socket and are the one thing that must survive a
+      // reconnect; pausing keeps them out of a closed socket until we rejoin.
+      signalQueueRef.current?.clearTransient();
+      signalQueueRef.current?.pause();
       console.log('WS Disconnected');
       if (shouldReconnectRef.current) scheduleReconnect();
       else setConnectionState('offline');
     };
 
-    socket.onerror = (err) => {
+    socket.onerror = () => {
+      // The close handler drives the reconnect; a transport error on its own is
+      // not terminal and must not be reported as one.
       setError('WebSocket connection failed');
-      console.error(err);
     };
 
     socketRef.current = socket;
@@ -838,6 +937,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     // The sender always sees their own file via the original File object URL,
     // even when it was password-locked for recipients.
     const url = URL.createObjectURL(file);
+    objectUrlsRef.current.add(url);
     setMessages(prev => [...prev, {
       ...initEnvelope, payload: '', file: { name: init.name, mime: init.mime, size: file.size, data: '' },
       fileUrl: url, locked: !!enc, progress: 0, status: 'sent', deliveredTo: [], seenBy: [],
@@ -879,7 +979,9 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
     // transport memory); everything else takes the single-envelope path.
     // Password-locked large files also stream — the ciphertext is what gets
     // chunked (see sendFileStream / approach (a)).
-    const stream = requiresDirectPath(file.size);
+    // Past a few peers the per-recipient ciphertext fan-out makes even a small
+    // relayed file expensive, so the direct path is used regardless of size.
+    const stream = requiresDirectPath(file.size) || exceedsRelayFanout(activePeers.length);
     if (!(stream ? isWithinP2PFileLimit(file.size) : isWithinFileLimit(file.size))) {
       return { ok: false, error: 'File exceeds size limit' };
     }
@@ -997,6 +1099,8 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       }
       socketRef.current?.close();
       p2pRef.current.reset();
+      channelsRef.current = null;
+      signalQueueRef.current?.clear();
     };
   }, [sessionId, peerId, connect]);
 
@@ -1115,5 +1219,5 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const transport: 'p2p' | 'relayed' =
     otherPeers.length > 0 && otherPeers.every(id => p2pPeers.includes(id)) ? 'p2p' : 'relayed';
 
-  return { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
+  return { messages, isConnected, connectionState, notice, dismissNotice, isPending, activePeers, joinRequests, error, isGroup, sendMessage, sendFile, sendLargeFile: sendFileStream, editMessage, deleteMessage, sendTyping, markAsRead, acceptJoin, rejectJoin, kickPeer, latencyMs, ioLoad, peerAliases, typingPeers, secured, safetyNumbers, fingerprints, ownFingerprint, p2pPeers, transport, directLinkFailed: p2p.directFailed, directLinkFailureReason: p2p.failureReason, peerMemberKeys, peerPinned, myPinned, whitelistRequests, requestWhitelist, acceptWhitelist, declineWhitelist, call, callEligiblePeer };
 }

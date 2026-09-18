@@ -19,9 +19,13 @@ export const RELAY_LIMITS = {
   // large groups may exceed this and be rejected — that is the intended safety
   // valve protecting the in-memory relay from runaway memory use.
   MAX_PAYLOAD_BYTES: 16 * 1024 * 1024, // 16MB
-  // Per-file raw byte cap (client-enforced before encryption). Supports short
-  // videos; kept under MAX_PAYLOAD_BYTES to leave room for encoding overhead.
-  MAX_FILE_BYTES: 5 * 1024 * 1024, // 5MB
+  // Per-file raw byte cap on the RELAY path (client-enforced before encryption).
+  // Matches P2P_FILE_THRESHOLD_BYTES in src/transport/p2p-policy.ts: anything at
+  // or above the threshold is routed peer-to-peer, so a relay file can never
+  // exceed it and the two values must agree. Kept modest because encryptForAll
+  // produces one ciphertext per recipient — a 1MB file in a large group fans out
+  // to many times its own size in a single payload.
+  MAX_FILE_BYTES: 1024 * 1024, // 1MB
   // Raw byte cap for files sent over the direct P2P data channel (chunked,
   // streamed). These bytes never touch the blind relay, so the cap is far higher
   // than MAX_FILE_BYTES — bounded only by the receiver streaming to a Blob.

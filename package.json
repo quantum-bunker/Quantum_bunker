@@ -1,7 +1,13 @@
 {
-  "name": "react-example",
+  "name": "quantum-bunker",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.10",
+  "description": "Zero-knowledge, ephemeral, real-time messaging vault. The server is a blind relay: it never decrypts, logs, or stores message payloads.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quantum-bunker/Quantum_bunker.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
@@ -17,47 +23,47 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "@noble/post-quantum": "^0.6.1",
+    "@noble/post-quantum": "^0.7.1",
     "@stablelib/chacha20poly1305": "^2.0.1",
     "@stablelib/ed25519": "^2.1.0",
     "@stablelib/hkdf": "^2.0.1",
     "@stablelib/random": "^2.0.1",
     "@stablelib/sha256": "^2.0.1",
     "@stablelib/x25519": "^2.0.1",
-    "@tailwindcss/vite": "^4.3.1",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
-    "helmet": "^8.2.0",
-    "lucide-react": "^1.20.0",
+    "helmet": "^8.3.0",
+    "lucide-react": "^1.46.0",
     "motion": "^12.40.0",
     "qrcode": "^1.5.4",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "uuid": "^14.0.0",
-    "vite": "^8.0.16",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "uuid": "^14.0.2",
+    "vite": "^8.3.0",
     "winston": "^3.19.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.0.1",
     "@types/qrcode": "^1.5.6",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@types/supertest": "^7.2.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/supertest": "^7.2.1",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.9",
-    "autoprefixer": "^10.4.21",
+    "autoprefixer": "^10.6.0",
     "jsdom": "^29.1.1",
     "supertest": "^7.2.2",
-    "tailwindcss": "^4.3.1",
-    "tsx": "^4.22.4",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.3",
-    "vite": "^8.0.16",
-    "vitest": "^4.1.5",
-    "ws": "^8.21.0"
+    "vite": "^8.3.0",
+    "vitest": "^4.1.11",
+    "ws": "^8.21.3"
   }
 }

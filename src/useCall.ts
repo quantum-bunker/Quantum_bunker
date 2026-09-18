@@ -1,5 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { CallConnection, CallSignal, CallConnectionState } from './transport/call-connection';
+import { CallConnection, CallSignal, CallConnectionState, isAddressedTo } from './transport/call-connection';
+import { classifyIceFailure, describeP2PFailure } from './transport/p2p-policy';
+import { getP2PIceConfig, hasStunConfigured } from './transport/ice-config';
+import { beginMediaPrompt, endMediaPrompt } from './media-prompt';
 
 export type CallState = 'idle' | 'calling' | 'ringing' | 'connecting' | 'active';
 
@@ -75,10 +78,17 @@ export function useCall(opts: UseCallOptions): UseCall {
   }, [setState]);
 
   const acquireMedia = useCallback(async (): Promise<MediaStream> => {
-    const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
-    localStreamRef.current = stream;
-    setLocalStream(stream);
-    return stream;
+    // Flagged for the duration of the permission prompt: it steals window focus,
+    // which would otherwise trigger the privacy blackout over the call UI.
+    beginMediaPrompt();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      return stream;
+    } finally {
+      endMediaPrompt();
+    }
   }, []);
 
   const buildConnection = useCallback((to: string, stream: MediaStream): CallConnection => {
@@ -89,7 +99,15 @@ export function useCall(opts: UseCallOptions): UseCall {
       onRemoteStream: (s) => setRemoteStream(s),
       onState: (s: CallConnectionState) => {
         if (s === 'connected') setState('active');
-        else if (s === 'failed') teardown('Could not establish a direct media path. Calls go peer-to-peer only — media is never relayed through a server. This works on the same network, and across networks when a self-hosted STUN server is configured (VITE_STUN_URL). Some networks (symmetric NAT / mobile data) cannot be punched without a relay and are unsupported by design.');
+        else if (s === 'failed') {
+          // Calls are peer-to-peer only, so a failure here is always an ICE
+          // failure — name the cause instead of listing every possible one.
+          const reason = classifyIceFailure(
+            hasStunConfigured(getP2PIceConfig()),
+            conn.gatheredReflexive,
+          );
+          teardown(`Call could not connect. ${describeP2PFailure(reason)}`);
+        }
         else if (s === 'closed' && stateRef.current !== 'idle') teardown();
       },
     });
@@ -158,6 +176,8 @@ export function useCall(opts: UseCallOptions): UseCall {
   }, []);
 
   const handleSignal = useCallback((from: string, signal: CallSignal) => {
+    if (!isAddressedTo(signal, selfId)) return;
+
     const active = remotePeerRef.current;
 
     if (signal.call === 'invite') {
@@ -202,7 +222,7 @@ export function useCall(opts: UseCallOptions): UseCall {
         void connRef.current?.onSignal(signal);
         break;
     }
-  }, [sendCallSignal, setState, buildConnection, teardown]);
+  }, [selfId, sendCallSignal, setState, buildConnection, teardown]);
 
   // End any in-flight call the moment the eligible peer changes or leaves so the
   // UI never shows a call to someone who is gone.

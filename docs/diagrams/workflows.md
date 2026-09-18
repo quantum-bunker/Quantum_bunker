@@ -104,7 +104,7 @@ sequenceDiagram
     S-->>A: join_request { peerId, message }
 
     Note over A: host clicks Accept
-    A->>S: accept_join { sessionId, targetPeerId }
+    A->>S: accept_join { peerId }
     S-->>B: joined { peerId, peerToken }
     S-->>A: peer_update { peers: [...] }
     Note over A,B: group mode auto-enables when peers > 2

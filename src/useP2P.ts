@@ -3,6 +3,7 @@ import { WebRTCMesh, RtcFrame } from './transport/webrtc-mesh';
 import { getP2PIceConfig } from './transport/ice-config';
 import {
   P2PPeerState,
+  P2PFailureReason,
   p2pReducer,
   meshStateToEvent,
 } from './transport/p2p-policy';
@@ -37,8 +38,13 @@ export interface UseP2P {
   connectedPeers: string[];
   peerStates: Record<string, P2PPeerState>;
   // True when at least one peer's direct connection has hard-failed (ICE could
-  // not punch a path). Surfaced to the UI so media never silently relays.
+  // not punch a path) or died after being established. Surfaced to the UI so
+  // media never silently relays.
   directFailed: boolean;
+  // Why the first failed peer failed, or null when none has. Lets the UI explain
+  // the actual outcome rather than printing one hardcoded guess.
+  failureReason: P2PFailureReason | null;
+  reasonOf: (peerId: string) => P2PFailureReason | undefined;
 }
 
 // Owns the WebRTC mesh and the per-peer signaling state machine. This is the
@@ -154,11 +160,22 @@ export function useP2P(opts: UseP2POptions): UseP2P {
     [],
   );
 
+  const reasonOf = useCallback(
+    (peerId: string): P2PFailureReason | undefined => meshRef.current?.reasonOf(peerId),
+    [],
+  );
+
   const connectedPeers = Object.entries(peerStates)
     .filter(([, s]) => s === 'connected')
     .map(([id]) => id);
 
-  const directFailed = Object.values(peerStates).some(s => s === 'failed');
+  const brokenPeer = Object.entries(peerStates).find(([, s]) => s === 'failed' || s === 'dropped');
+  const directFailed = brokenPeer !== undefined;
+  // A dropped peer has no ICE diagnosis of its own — the link was working, so
+  // the honest reason is that it went away.
+  const failureReason: P2PFailureReason | null = brokenPeer
+    ? (meshRef.current?.reasonOf(brokenPeer[0]) ?? (brokenPeer[1] === 'dropped' ? 'peer-left' : 'timeout'))
+    : null;
 
   return {
     ensurePeer,
@@ -173,5 +190,7 @@ export function useP2P(opts: UseP2POptions): UseP2P {
     connectedPeers,
     peerStates,
     directFailed,
+    failureReason,
+    reasonOf,
   };
 }

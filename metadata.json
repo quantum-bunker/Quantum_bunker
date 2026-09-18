@@ -1,6 +1,6 @@
 {
   "name": "Quantum Bunker",
-  "description": "Zero-knowledge, 2-peer real-time communication relay with end-to-end encryption support.",
+  "description": "Zero-knowledge, ephemeral group messaging relay with end-to-end encryption, peer-to-peer file transfer, and 1-on-1 voice/video calls. Vaults hold up to 10 peers.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

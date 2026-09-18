@@ -56,15 +56,17 @@ Authentication precedence:
 
 #### `accept_join` / `reject_join`
 ```typescript
-{ sessionId: string; targetPeerId: string; }
+{ peerId: string; }   // peerId = the peer being accepted/rejected
 ```
 Host-only. Moves a peer from `pendingPeers` to `peers` (accept) or drops them (reject).
+No `sessionId` is sent — the server uses the session already bound to the socket.
 
 #### `kick_peer`
 ```typescript
-{ sessionId: string; targetPeerId: string; }
+{ peerId: string; }   // peerId = the peer being kicked
 ```
 Host-only. Immediately closes the target peer's socket and removes them from the session.
+No `sessionId` is sent — the server uses the session already bound to the socket. Only applies in group sessions.
 
 #### `RelayEnvelope` (any relay message type)
 ```typescript
@@ -137,20 +139,82 @@ Sent only to the host when a peer enters the pending queue.
 `SIGNALING` envelopes carry client-to-client signaling. The server forwards them opaquely. The `payload` is a base64url-encoded JSON object with a `kind` discriminator:
 
 ### WebRTC (P2P data channels)
+
+One `kind: 'rtc'` frame, discriminated by `rtc`, addressed with `to`:
+
 ```
-kind: 'rtc-offer'        SDP offer from initiating peer
-kind: 'rtc-answer'       SDP answer from responding peer
-kind: 'ice-candidate'    ICE candidate from either peer
-kind: 'rtc-hangup'       Peer is closing the data channel connection
+{ kind: 'rtc', to, rtc: 'offer',      data }   SDP offer   (JSON string)
+{ kind: 'rtc', to, rtc: 'answer',     data }   SDP answer  (JSON string)
+{ kind: 'rtc', to, rtc: 'candidates', data }   ICE candidate BATCH (JSON array)
+{ kind: 'rtc', to, rtc: 'candidate',  data }   ICE candidate, single — receive only
 ```
 
+Receivers MUST ignore any frame whose `to` is not their own peer id: the relay
+fans `SIGNALING` out to every peer in the session.
+
 ### Voice/Video Calls
+
+One `kind: 'call'` frame, discriminated by `call`, addressed with `to`:
+
 ```
-kind: 'call'             Outbound call invite (contains SDP offer)
-kind: 'call-accept'      Callee accepts (contains SDP answer)
-kind: 'call-decline'     Callee declines
-kind: 'call-end'         Either party ends an active call
+{ kind: 'call', to, call: 'invite'  }                 Ring the callee
+{ kind: 'call', to, call: 'accept'  }                 Callee accepts
+{ kind: 'call', to, call: 'decline' }                 Callee declines
+{ kind: 'call', to, call: 'busy'    }                 Callee is already in a call
+{ kind: 'call', to, call: 'cancel'  }                 Caller aborts before answer
+{ kind: 'call', to, call: 'end'     }                 Either party ends an active call
+{ kind: 'call', to, call: 'sdp', sdp }                Media negotiation
+{ kind: 'call', to, call: 'ice', candidates }         ICE candidate BATCH
+{ kind: 'call', to, call: 'ice', candidate  }         ICE candidate, single — receive only
 ```
+
+The `to` check applies here too. Without it an invite rings every peer in the
+vault, and the fullscreen call UI covers chat for uninvolved peers.
+
+### ICE candidate batching
+
+Outbound ICE candidates are buffered for ~60 ms and emitted as one frame
+(`candidates`, an array). Previously each candidate was its own envelope, and a
+call's trickle burst exceeded `MSG_PER_SECOND_LIMIT` (10 per peer). The relay
+drops the excess, and the dropped frames included Noise handshakes — which left
+chat silently undecryptable. Batching is what collapses that burst.
+
+All `SIGNALING` output is additionally paced through a client-side priority
+queue (Noise handshake > chat > RTC mesh > call ICE) below the relay rate limit.
+See `src/transport/send-queue.ts`.
+
+**Compatibility:** senders emit `candidates`; receivers accept both `candidates`
+and the single-candidate `candidate` shape. Keep accepting `candidate` for at
+least one version so peers on the previous build can still negotiate.
+
+### Noise Handshake
+
+One `kind: 'noise'` frame, addressed with `to`:
+```
+{ kind: 'noise', to, step: 0, data: '' }   Restart request — no handshake material
+{ kind: 'noise', to, step: 1, data }       Noise XX message 1  [initiator only]
+{ kind: 'noise', to, step: 2, data }       Noise XX message 2  [responder only]
+{ kind: 'noise', to, step: 3, data }       Noise XX message 3  [initiator only]
+```
+
+The initiator is the peer with the lexicographically smaller `peerId`, so only
+one side ever sends message 1. That makes a lost channel asymmetric to recover:
+an initiator rebuilds by sending message 1 again, but a responder that lost its
+channel (a reload, a new tab) has nothing to send and would wait forever. Step 0
+is how it asks. The initiator honours a step 0 only once its own handshake has
+settled — while it is still `handshaking`, the message 1 it already sent is in
+flight and restarting would invalidate the reply before it lands.
+
+A message 1 always starts a fresh handshake on the receiving side, including
+when that side is mid-handshake. Feeding it to a half-finished `HandshakeState`
+throws, which latches the channel to `failed`; nothing recovers from that, and
+`allReady()` then stays false for the rest of the session, silently diverting
+every message to the offline outbox with nothing shown to the user.
+
+Channels outlive the socket. A reconnect does not rebuild them — the double
+ratchet has no relationship to the connection it was negotiated over — and
+queued handshake frames survive a disconnect for the same reason. See
+`src/crypto/peer-channels.ts`.
 
 ### In-Chat Mutual Whitelist
 ```

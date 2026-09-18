@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trash2, Sun, Moon, Menu, Palette, HelpCircle, X, BookOpen } from 'lucide-react';
+import { Trash2, Sun, Moon, Menu, Palette, HelpCircle, X, BookOpen, Radio } from 'lucide-react';
 import { useSession } from './useSession';
 import { useMembership } from './useMembership';
 import { useContacts } from './useContacts';
@@ -13,10 +13,16 @@ import { ClassicHome } from './components/ClassicHome';
 import { JoinLinkModal } from './components/JoinLinkModal';
 import { HelpModal } from './components/HelpModal';
 import { Toast, ToastState } from './components/Toast';
+import { ConnectivitySettings } from './components/ConnectivitySettings';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { useMediaPrompt } from './media-prompt';
+import { PROTOCOL_VERSION } from './shared/contracts/v1/protocol';
 
 export default function App() {
   const { family, mode, setFamily, toggleMode } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [netMenuOpen, setNetMenuOpen] = useState(false);
+  const mediaPromptOpen = useMediaPrompt();
   const [view, setView] = useState<'home' | 'chat'>(() => {
     return sessionStorage.getItem('qb-sessionId') ? 'chat' : 'home';
   });
@@ -126,7 +132,10 @@ export default function App() {
 
   return (
     <div className={`qb-app h-screen w-full ${mode === 'dark' ? 'dark' : ''} selection:bg-cyan-500/30 flex flex-col overflow-hidden`}>
-      {(!isFocused && view === 'chat') && <div className="fixed inset-0 bg-black z-[99999] pointer-events-none flex items-center justify-center" />}
+      {/* Privacy blackout whenever the window loses focus. Suppressed around a
+          camera/mic permission prompt, which takes focus itself — granting
+          access would otherwise blank the screen mid-call. */}
+      {(!isFocused && view === 'chat' && !mediaPromptOpen) && <div className="fixed inset-0 bg-black z-[99999] pointer-events-none flex items-center justify-center" />}
 
       <header className="qb-surface h-16 border-b flex items-center justify-between px-4 sm:px-6 shrink-0 z-50">
         <div className="flex items-center gap-2 sm:gap-3 cursor-pointer" onClick={reset}>
@@ -135,7 +144,7 @@ export default function App() {
           </div>
           <span className="qb-title font-bold tracking-widest sm:text-base text-[10px]">
             {family === 'classic' ? 'Quantum Bunker' : 'QUANTUM_BUNKER'}
-            {family !== 'classic' && <span className="qb-accent-text text-[10px] font-normal ml-2 opacity-70 hidden md:inline">v1.0.4-RELAY</span>}
+            {family !== 'classic' && <span className="qb-accent-text text-[10px] font-normal ml-2 opacity-70 hidden md:inline" title={`Build ${__BUILD_COMMIT__}`}>v{__APP_VERSION__}</span>}
           </span>
         </div>
         <div className="flex items-center gap-3 sm:gap-6">
@@ -170,6 +179,14 @@ export default function App() {
                   </motion.div>
                 </>
               )}
+            </AnimatePresence>
+          </div>
+          <div className="relative">
+            <button onClick={() => setNetMenuOpen(o => !o)} className="p-1.5 sm:p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-slate-500 dark:text-slate-400 transition-colors" title="Direct connection (STUN) settings" aria-label="Open connectivity settings">
+              <Radio size={16} className="sm:w-[18px] sm:h-[18px]" />
+            </button>
+            <AnimatePresence>
+              {netMenuOpen && <ConnectivitySettings onClose={() => setNetMenuOpen(false)} />}
             </AnimatePresence>
           </div>
           <button onClick={() => setHelpOpen(true)} className="p-1.5 sm:p-2 rounded-lg qb-accent-text hover:qb-accent-soft-bg ring-1 qb-accent-border transition-colors" title="Help & guide — press ? anytime" aria-label="Open help and guide">
@@ -298,7 +315,9 @@ export default function App() {
             </motion.div>
           ) : (
             <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex overflow-hidden">
-              <ChatRoom sessionId={sessionId!} sessionName={sessionName} peerId={peerId!} isHost={isHost} expiresAt={expiresAt} timeLeft={timeLeft} isExpired={isExpired} securityOptions={securityOptions} reset={reset} identity={identity.identity} />
+              <ErrorBoundary>
+                <ChatRoom sessionId={sessionId!} sessionName={sessionName} peerId={peerId!} isHost={isHost} expiresAt={expiresAt} timeLeft={timeLeft} isExpired={isExpired} securityOptions={securityOptions} reset={reset} identity={identity.identity} />
+              </ErrorBoundary>
             </motion.div>
           )}
         </AnimatePresence>
@@ -332,7 +351,7 @@ export default function App() {
               <span>TRANSPORT: <span className="qb-title">WSS/1.1</span></span>
             </div>
             <div className="flex gap-4">
-              <span className="hidden md:inline">Contract: v1.0.4</span>
+              <span className="hidden md:inline">Protocol: v{PROTOCOL_VERSION}</span>
               <span className="text-emerald-500 dark:text-emerald-500 flex items-center gap-1.5 font-bold"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Node_Stable</span>
             </div>
           </>

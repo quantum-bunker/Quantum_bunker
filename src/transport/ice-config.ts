@@ -1,20 +1,33 @@
 // Resolves the RTCConfiguration used for every peer connection.
 //
-// POLICY (operator chose: STUN-only, never relay):
+// POLICY (STUN yes, TURN never):
 //   * Media bytes MUST NEVER traverse a TURN relay. Relaying would put call /
 //     file bandwidth on a server and defeat the zero-load design, so any
-//     turn:/turns: URL is stripped from whatever an operator configures — the
-//     never-relay invariant is enforced in code, not just by convention.
-//   * NO third-party STUN is ever hardcoded. A public STUN server (Google,
-//     Cloudflare, …) would reflect the user's public IP to that third party,
-//     which breaks the "can't make it known" requirement. STUN reflection is
-//     near-zero load (a single packet, no media), so an operator who wants
-//     cross-network connectivity points VITE_STUN_URL (or VITE_ICE_SERVERS) at
-//     a STUN server THEY run — no outside party, no media load.
-//   * Unconfigured default is an EMPTY list: peers connect via host candidates
-//     only (LAN / same network) and nothing leaks anywhere. Cross-network calls
-//     behind symmetric/mobile NAT cannot be punched without a relay and will
-//     surface an error rather than silently falling back to one.
+//     turn:/turns: URL is stripped from whatever is configured — the never-relay
+//     invariant is enforced in code, not just by convention.
+//   * Public STUN is ON by default. A STUN server learns an IP address and a
+//     timestamp; it never sees media, signaling, or ciphertext, and it cannot
+//     correlate the two peers of a session. Weighed against that: without
+//     reflection the direct path only ever works between two devices on the same
+//     LAN, which is why large files and calls failed everywhere else.
+//   * Self-hosting STUN is not an option on the current deployment (Render has
+//     no inbound UDP), so "run your own" is not a default that anyone can
+//     actually take. Users who want zero reflection set the mode to `off` and
+//     accept LAN-only; users who run their own point the setting (or
+//     VITE_STUN_URL) at it.
+//
+// Resolution order, first non-empty wins:
+//   user setting (localStorage) -> VITE_ICE_SERVERS -> VITE_STUN_URL -> defaults
+// A user setting of `off` short-circuits to an empty list.
+
+import { loadStunSetting, StunSetting } from '../stun-settings';
+
+// Two independent operators so a single outage does not take reflection down.
+// Both are anycast, free, and require no credentials.
+export const DEFAULT_STUN_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+];
 
 function isRelayUrl(url: string): boolean {
   const u = url.trim().toLowerCase();
@@ -53,11 +66,19 @@ export function parseIceServers(raw: string | undefined): RTCIceServer[] {
   return urls.length ? [{ urls }] : [];
 }
 
-// The single STUN-only resolver. Operators provide their OWN STUN via either the
-// full VITE_ICE_SERVERS JSON/list or the convenience VITE_STUN_URL (one or more
-// comma-separated stun: URLs). TURN entries are stripped from both. Returns an
-// empty list (host-candidates only) when nothing is configured.
-export function resolveStunServers(env: Record<string, string | undefined>): RTCIceServer[] {
+// The single resolver. `setting` is the per-device user choice; omitting it
+// means "no user preference" and resolution falls through to the env vars and
+// then the built-in defaults. TURN entries are stripped from every source.
+export function resolveStunServers(
+  env: Record<string, string | undefined>,
+  setting?: StunSetting,
+): RTCIceServer[] {
+  if (setting?.mode === 'off') return [];
+  if (setting?.mode === 'custom') {
+    const custom = stripRelayServers([{ urls: setting.urls }]);
+    if (custom.length) return custom;
+  }
+
   const override = stripRelayServers(parseIceServers(env.VITE_ICE_SERVERS));
   if (override.length) return override;
 
@@ -66,7 +87,15 @@ export function resolveStunServers(env: Record<string, string | undefined>): RTC
     const urls = raw.split(',').map(u => u.trim()).filter(Boolean).filter(u => !isRelayUrl(u));
     if (urls.length) return [{ urls }];
   }
-  return [];
+
+  return stripRelayServers(DEFAULT_STUN_SERVERS);
+}
+
+// True when the resolved config can reflect a public address at all. The
+// failure diagnostics use this to tell "you turned STUN off" apart from "STUN
+// was on and still could not punch a path".
+export function hasStunConfigured(config: RTCConfiguration): boolean {
+  return (config.iceServers ?? []).length > 0;
 }
 
 function readEnv(): Record<string, string | undefined> {
@@ -74,13 +103,21 @@ function readEnv(): Record<string, string | undefined> {
   return meta.env ?? {};
 }
 
+// Pre-gathering a small pool shortens the time to a first usable candidate pair,
+// which matters most on the relay-cold-start path where trickle ICE would
+// otherwise begin only after signaling completes.
+const ICE_CANDIDATE_POOL_SIZE = 4;
+
 export function getIceConfig(): RTCConfiguration {
-  return { iceServers: resolveStunServers(readEnv()) };
+  return {
+    iceServers: resolveStunServers(readEnv(), loadStunSetting()),
+    iceCandidatePoolSize: ICE_CANDIDATE_POOL_SIZE,
+  };
 }
 
 // ICE config for the direct media path (calls + streamed files). Identical
-// STUN-only policy as getIceConfig — both the call layer and the data mesh share
-// one resolver so they can never disagree on reachability.
+// policy to getIceConfig — both the call layer and the data mesh share one
+// resolver so they can never disagree on reachability.
 export function getP2PIceConfig(): RTCConfiguration {
-  return { iceServers: resolveStunServers(readEnv()) };
+  return getIceConfig();
 }

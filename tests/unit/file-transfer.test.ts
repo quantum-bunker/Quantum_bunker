@@ -152,3 +152,25 @@ describe('file-transfer', () => {
     });
   });
 });
+
+describe('resolveMime for voice notes', () => {
+  it('resolves a generic-typed voice recording to audio, not video', () => {
+    // webm/ogg are shared audio+video containers and EXT_MIME maps them to
+    // video/*, so a voice note with a generic MIME rendered in a <video>
+    // element showing a blank picture. voiceFileName() names these files.
+    expect(resolveMime('', 'voice-1700000000.webm')).toBe('audio/webm');
+    expect(resolveMime('application/octet-stream', 'voice-1.webm')).toBe('audio/webm');
+    expect(resolveMime('', 'voice-1.ogg')).toBe('audio/ogg');
+    expect(resolveMime('', 'voice-1.m4a')).toBe('audio/mp4');
+  });
+
+  it('still resolves an ordinary webm file to video', () => {
+    expect(resolveMime('', 'clip.webm')).toBe('video/webm');
+    expect(resolveMime('', 'holiday.mp4')).toBe('video/mp4');
+  });
+
+  it('never overrides an explicit MIME', () => {
+    expect(resolveMime('video/webm', 'voice-1.webm')).toBe('video/webm');
+    expect(resolveMime('audio/webm;codecs=opus', 'voice-1.webm')).toBe('audio/webm;codecs=opus');
+  });
+});
