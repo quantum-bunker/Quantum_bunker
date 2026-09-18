@@ -52,7 +52,10 @@ export class RelayMessage {
       occurredAt: Date.now(),
       payload: {
         envelopeType: envelope.type,
-        byteSize: JSON.stringify(envelope).length,
+        // payload length, not a full re-serialization: this runs on every
+        // relayed message and the envelope can be MAX_PAYLOAD_BYTES large,
+        // while the listener is only subscribed when QB_METADATA_LOGS=1.
+        byteSize: envelope.payload.length,
         from: envelope.from,
       },
     });

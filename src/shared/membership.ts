@@ -129,14 +129,37 @@ export function decodeToken(encoded: string): MembershipToken | null {
 // is visible. Same key in → same fingerprint out on every device, so two people
 // can read it aloud to confirm they pinned each other. Returns '' for a
 // malformed key rather than throwing, so callers can render a single check.
+// 16 bytes, not 8: this is the artifact two people read aloud to detect a key
+// substitution, and 64 bits is below the 128-bit floor such comparisons need.
+const FINGERPRINT_BYTES = 16;
+const LEGACY_FINGERPRINT_BYTES = 8;
+
+function fingerprintOfLength(publicKeyB64: string, bytes: number): string {
+  const digest = sha256(b64urlDecode(publicKeyB64));
+  let hex = '';
+  for (let i = 0; i < bytes; i++) hex += digest[i].toString(16).padStart(2, '0');
+  const groups = hex.match(/.{4}/g);
+  return groups ? groups.join(' ').toUpperCase() : '';
+}
+
 export function fingerprintPublicKey(publicKeyB64: string): string {
   try {
-    const digest = sha256(b64urlDecode(publicKeyB64));
-    let hex = '';
-    for (let i = 0; i < 8; i++) hex += digest[i].toString(16).padStart(2, '0');
-    return hex.match(/.{4}/g)!.join(' ').toUpperCase();
+    return fingerprintOfLength(publicKeyB64, FINGERPRINT_BYTES);
   } catch {
     return '';
+  }
+}
+
+// Contacts pinned before the widening hold the 8-byte form. That value is a
+// prefix of the current one for the same key, so an old pin still verifies —
+// widening must not fire a key-change alarm on every existing contact.
+export function fingerprintMatches(publicKeyB64: string, pinned: string): boolean {
+  if (!pinned) return false;
+  try {
+    if (fingerprintOfLength(publicKeyB64, FINGERPRINT_BYTES) === pinned) return true;
+    return fingerprintOfLength(publicKeyB64, LEGACY_FINGERPRINT_BYTES) === pinned;
+  } catch {
+    return false;
   }
 }
 

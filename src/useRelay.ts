@@ -9,7 +9,8 @@ import { useP2P } from './useP2P';
 import { useCall } from './useCall';
 import { requiresDirectPath, exceedsRelayFanout, P2P_STREAM_HIGH_WATER_BYTES, P2P_STREAM_DRAIN_TIMEOUT_MS, STREAM_RECEIVER_TTL_MS, PING_RECORD_TTL_MS } from './transport/p2p-policy';
 import { PacedSender, classifySignalPriority, SIGNAL_SENDS_PER_SECOND } from './transport/send-queue';
-import { randomId } from './random';
+import { randomId, randomUnitInterval } from './random';
+import { PADDING } from './shared/contracts/v1/padding';
 import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
 import { loadContacts, upsertContact } from './contacts-store';
 import {
@@ -329,7 +330,9 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   // tiny (mirrors PADDING.TIMING_JITTER_MAX_MS in constants.ts) so it is not
   // felt in the UI; interactive sends never go through here.
   const dispatchJittered = useCallback((env: RelayEnvelope) => {
-    const delay = Math.random() * 120;
+    // The whole point of this jitter is to be unpredictable to an observer,
+    // and V8's PRNG state is recoverable from a handful of outputs.
+    const delay = randomUnitInterval() * PADDING.TIMING_JITTER_MAX_MS;
     setTimeout(() => dispatch(env), delay);
   }, [dispatch]);
 

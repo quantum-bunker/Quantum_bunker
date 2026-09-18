@@ -7,6 +7,8 @@ import {
   decodeToken,
   verifyMembership,
   JOIN_PROOF_TOLERANCE_MS,
+  fingerprintPublicKey,
+  fingerprintMatches,
 } from '../../src/shared/membership';
 
 describe('Membership tokens', () => {
@@ -86,5 +88,46 @@ describe('Membership tokens', () => {
 
   it('returns null when decoding garbage', () => {
     expect(decodeToken('not-a-token')).toBeNull();
+  });
+});
+
+describe('fingerprint width and legacy pins', () => {
+  // This is the artifact two people read aloud to detect a key substitution;
+  // it used to publish only 8 bytes of the digest, below the 128-bit floor
+  // such comparisons need.
+  it('publishes 128 bits', () => {
+    const id = generateIdentity();
+    const fp = fingerprintPublicKey(id.publicKey);
+    const hex = fp.replace(/ /g, '');
+    expect(hex).toHaveLength(32);
+    expect(hex).toMatch(/^[0-9A-F]{32}$/);
+  });
+
+  it('is stable for a key and distinct between keys', () => {
+    const a = generateIdentity();
+    const b = generateIdentity();
+    expect(fingerprintPublicKey(a.publicKey)).toBe(fingerprintPublicKey(a.publicKey));
+    expect(fingerprintPublicKey(a.publicKey)).not.toBe(fingerprintPublicKey(b.publicKey));
+  });
+
+  it('still verifies a contact pinned before the widening', () => {
+    const id = generateIdentity();
+    // The old 8-byte form is a prefix of the current one for the same key.
+    const legacy = fingerprintPublicKey(id.publicKey).split(' ').slice(0, 4).join(' ');
+    expect(legacy).toHaveLength(19);
+    expect(fingerprintMatches(id.publicKey, legacy)).toBe(true);
+  });
+
+  it('accepts the current form and rejects another key', () => {
+    const id = generateIdentity();
+    const other = generateIdentity();
+    expect(fingerprintMatches(id.publicKey, fingerprintPublicKey(id.publicKey))).toBe(true);
+    expect(fingerprintMatches(other.publicKey, fingerprintPublicKey(id.publicKey))).toBe(false);
+  });
+
+  it('rejects an empty or malformed pin rather than matching it', () => {
+    const id = generateIdentity();
+    expect(fingerprintMatches(id.publicKey, '')).toBe(false);
+    expect(fingerprintMatches('!!!', 'AAAA BBBB CCCC DDDD')).toBe(false);
   });
 });

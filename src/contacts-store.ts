@@ -1,4 +1,4 @@
-import { fingerprintPublicKey, decodeToken } from './shared/membership';
+import { fingerprintPublicKey, fingerprintMatches, decodeToken } from './shared/membership';
 
 // Client-only contact book. Trust lives ENTIRELY on this device: a contact is a
 // pinned membership public key the user has decided to trust. The server never
@@ -142,5 +142,5 @@ export function revokeContact(publicKey: string): Contact[] {
 // True when the live key still matches the fingerprint we pinned. A false here
 // means the key changed since we trusted it — treat as an impersonation signal.
 export function isPinIntact(contact: Contact): boolean {
-  return fingerprintPublicKey(contact.publicKey) === contact.pinnedFingerprint;
+  return fingerprintMatches(contact.publicKey, contact.pinnedFingerprint);
 }

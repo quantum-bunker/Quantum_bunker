@@ -117,4 +117,38 @@ describe('metadata logging', () => {
 
     expect(written.join('')).toContain('SessionExpired');
   });
+
+  // EnvelopeRejected was the one per-message event that logged its full
+  // rawEnvelope unconditionally — `from`, `nonce`, `timestamp` — which is the
+  // same participant graph the flag exists to withhold. Every duplicate-nonce
+  // or offline-recipient rejection wrote one.
+  it('does not leak envelope metadata on rejection when the flag is unset', async () => {
+    delete process.env.QB_METADATA_LOGS;
+    const bus = makeBus();
+    setupLogging(bus);
+
+    bus.fire('EnvelopeRejected', {
+      type: 'EnvelopeRejected',
+      sessionId: 'vault-abc',
+      occurredAt: Date.now(),
+      payload: {
+        reason: 'Duplicate nonce',
+        rawEnvelope: {
+          sessionId: 'vault-abc',
+          from: 'peer-xyz',
+          nonce: 'nonce-secret',
+          type: 'NOISE_MESSAGE',
+          timestamp: 1234567890,
+          payload: '[redacted 42 chars]',
+        },
+      },
+    } as never);
+    await new Promise(r => setTimeout(r, 20));
+
+    const out = written.join('');
+    expect(out).toContain('Duplicate nonce');
+    expect(out).not.toContain('peer-xyz');
+    expect(out).not.toContain('nonce-secret');
+    expect(out).not.toContain('1234567890');
+  });
 });

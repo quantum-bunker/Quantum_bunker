@@ -32,9 +32,14 @@ export function setupLogging(eventBus: IEventBus) {
   // makes a relay operable (capacity, expiry) without describing who talked.
   eventBus.on('SessionCreated', (e) => logger.info(`SessionCreated: ${e.sessionId}`));
   eventBus.on('SessionExpired', (e) => logger.info(`SessionExpired: ${e.sessionId} - Reason: ${e.payload.reason}`));
-  // Rejections are a safety signal and already redact rawEnvelope.payload
-  // upstream (see relay-message.use-case.ts).
-  eventBus.on('EnvelopeRejected', (e) => logger.warn(`EnvelopeRejected: ${e.sessionId}`, e.payload));
+  // Rejections are a safety signal, and rawEnvelope.payload is already redacted
+  // upstream (see relay-message.use-case.ts). But rawEnvelope still carries
+  // `from`, `nonce` and `timestamp` — precisely the who-talked-to-whom-and-when
+  // graph this logger exists to not keep. Only the reason is unconditional.
+  eventBus.on('EnvelopeRejected', (e) => {
+    if (verbose) logger.warn(`EnvelopeRejected: ${e.sessionId}`, e.payload);
+    else logger.warn(`EnvelopeRejected: ${e.sessionId} - ${e.payload?.reason ?? 'unknown'}`);
+  });
 
   // A peer joining is worth a line; WHICH peer is a participant identifier and
   // is dropped.

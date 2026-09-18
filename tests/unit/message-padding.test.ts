@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { padPlaintext, unpadPlaintext } from '../../src/crypto/message-padding';
+import { PADDING } from '../../src/shared/contracts/v1/padding';
+import { PADDING as RELAY_PADDING } from '../../src/backend/core/constants';
 
-const BUCKETS = [8 * 1024, 64 * 1024, 512 * 1024, 4 * 1024 * 1024];
+// Read from the contract rather than restating the tiers: a third hardcoded
+// copy here is exactly what let the other two drift unnoticed.
+const BUCKETS = PADDING.BUCKETS;
 
 function bytes(n: number, fill = 0x41): Uint8Array {
   return new Uint8Array(n).fill(fill);
@@ -66,5 +70,23 @@ describe('message-padding', () => {
     const bogus = new Uint8Array(16);
     new DataView(bogus.buffer).setUint32(0, 9999, false);
     expect(() => unpadPlaintext(bogus)).toThrow();
+  });
+});
+
+describe('padding contract', () => {
+  it('the relay and the client pad against one definition', () => {
+    // A re-export today, but this fails loudly if anyone reintroduces a copy.
+    expect(RELAY_PADDING).toBe(PADDING);
+    expect(RELAY_PADDING.BUCKETS).toEqual(PADDING.BUCKETS);
+    expect(RELAY_PADDING.LENGTH_PREFIX_BYTES).toBe(PADDING.LENGTH_PREFIX_BYTES);
+  });
+
+  it('padding alone never exceeds MAX_PADDED_BYTES', () => {
+    const largestBucket = PADDING.BUCKETS[PADDING.BUCKETS.length - 1];
+    expect(largestBucket).toBeLessThanOrEqual(PADDING.MAX_PADDED_BYTES);
+
+    const padded = padPlaintext(bytes(largestBucket - PADDING.LENGTH_PREFIX_BYTES));
+    expect(padded.length).toBe(largestBucket);
+    expect(padded.length).toBeLessThanOrEqual(PADDING.MAX_PADDED_BYTES);
   });
 });

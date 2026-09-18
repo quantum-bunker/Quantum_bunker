@@ -124,7 +124,7 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 
 8. **Calls are 1-on-1 only**: `useCall` only operates when exactly one other peer is in the session. Group video conferencing is intentionally not offered.
 
-9. **Padding is client-only**: The server MUST NOT pad payloads. Clients pad plaintext to fixed buckets before encryption. `PADDING.BUCKETS` in `constants.ts` is the source of truth; `src/crypto/message-padding.ts` mirrors it.
+9. **Padding is client-only**: The server MUST NOT pad payloads. Clients pad plaintext to fixed buckets before encryption. `PADDING` lives in `src/shared/contracts/v1/padding.ts` — a single definition that `constants.ts` re-exports and `src/crypto/message-padding.ts` imports. Never reintroduce a second copy.
 
 ---
 
@@ -141,15 +141,15 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 ### Messaging
 - Send: `RelayEnvelope` over WebSocket → server fans out to all other peers
 - Types: `PLAINTEXT` (refused by relay), `NOISE_MESSAGE`, `SIGNALING`, `PING`/`PONG`, `ACK`, `READ`, `EDIT`, `DELETE`, `FILE`
-- ACK receipts: server sends `ACK` back to sender on relay
+- ACK receipts: the receiving client returns an `ACK` envelope — the relay generates nothing
 - Read receipts: peer sends `READ` envelope with original nonce
 - Edit/delete: `EDIT` carries encrypted `{target, text}`; `DELETE` carries target nonce. Both author-bound; applied client-side
 - Auto-disappear: messages vanish client-side after 5 minutes
 - Rate limit: 10 messages/second per peer; 50 connections/minute per IP
 
-### File Transfer (Relay — up to 5 MB)
+### File Transfer (Relay — up to 1 MB)
 - `FILE` envelope carries an encrypted `FileAttachment` (base64 blob + metadata) over the double-ratchet path
-- Client-enforced size cap: `MAX_FILE_BYTES` (5 MB) before encryption
+- Client-enforced size cap: `MAX_FILE_BYTES` (1 MB) before encryption
 - Voice messages: `audio/webm` with `echoCancellation`/`noiseSuppression`/`autoGainControl`
 - Video files render in a `<video>` player
 - `sendFile` refuses to relay unless the E2E channel manager exists — no plaintext fallback
@@ -174,7 +174,7 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 - Clients pad plaintext to fixed size buckets **before** encryption: 8 KB / 64 KB / 512 KB / 4 MB
 - Non-interactive frames (receipts, edits, deletes) add 0–120 ms random jitter before relay
 - The server never pads or delays — it is a blind forwarder
-- Frontend: `src/crypto/message-padding.ts`; buckets are sourced from `PADDING.BUCKETS` in `constants.ts`
+- Frontend: `src/crypto/message-padding.ts`; buckets are sourced from `PADDING.BUCKETS` in `src/shared/contracts/v1/padding.ts`
 
 ### Message Search
 - Client-side real-time keyword filter + highlight (`src/message-search.ts`)
@@ -241,7 +241,7 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 | `SESSION_LIMITS.MAX_PENDING_PEERS` | 10 | Pending join queue cap |
 | `SESSION_LIMITS.MAX_ACTIVE_SESSIONS` | 10,000 | Global cap (env `MAX_ACTIVE_SESSIONS`) |
 | `RELAY_LIMITS.MAX_PAYLOAD_BYTES` | 16 MB | Relay envelope payload cap |
-| `RELAY_LIMITS.MAX_FILE_BYTES` | 5 MB | Per-file via relay (pre-encryption) |
+| `RELAY_LIMITS.MAX_FILE_BYTES` | 1 MB | Per-file via relay (pre-encryption) |
 | `RELAY_LIMITS.MAX_P2P_FILE_BYTES` | 256 MB | Per-file via P2P data channel |
 | `RELAY_LIMITS.FILE_CHUNK_BYTES` | 64 KB | P2P streaming chunk size |
 | `RELAY_LIMITS.WS_MAX_FRAME_BYTES` | 16 MB + 64 KB | WS frame size limit |
@@ -253,7 +253,7 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 | `RELAY_LIMITS.JOIN_TIMEOUT_MS` | 10 s | Socket must join within this or be dropped |
 | `RELAY_LIMITS.MAX_BUFFERED_BYTES` | 24 MB | Per-socket backpressure cutoff |
 | `RELAY_LIMITS.NONCE_CACHE_MAX` | 50,000 | Server-side replay dedup cache |
-| `PADDING.BUCKETS` | 8 KB / 64 KB / 512 KB / 4 MB | Client plaintext padding tiers |
+| `PADDING.BUCKETS` | 8 KB / 64 KB / 512 KB / 4 MB | Client plaintext padding tiers (defined in `shared/contracts/v1/padding.ts`) |
 | `PADDING.TIMING_JITTER_MAX_MS` | 120 ms | Max random delay on non-interactive frames |
 | `REST_LIMITS.SESSION_CREATE_PER_WINDOW` | 10/min | Per IP (env `REST_SESSION_CREATE_LIMIT`) |
 | `REST_LIMITS.GENERAL_PER_WINDOW` | 120/min | Per IP (env `REST_GENERAL_LIMIT`) |
@@ -266,7 +266,7 @@ server.ts                       ← Express + Vite middleware + WS + cleanup sch
 ```
 POST   /api/sessions               Create session (optional hostPublicKey enables whitelist)
 GET    /api/sessions/:id           Get public metadata only (never tokens, hostId, or peers)
-POST   /api/sessions/:id/refresh   Extend TTL (requires active participants)
+POST   /api/sessions/:id/refresh   Extend TTL (X-Host-Token, or X-Peer-Id + X-Peer-Token)
 DELETE /api/sessions/:id           Destroy (X-Host-Token header)
 GET    /api/health                 Health check
 ```
@@ -416,7 +416,6 @@ feature/* ← one feature per branch, PR into develop
 - Run `npm run lint` (tsc --noEmit) before declaring any backend change complete
 - The frontend has no build step in dev — Vite serves it via Express middleware on port 3000
 - P2P data channels are double-ratchet encrypted before DTLS — never remove either layer
-- Keep `PADDING.BUCKETS` in `constants.ts` and `src/crypto/message-padding.ts` in sync
 
 ---
 
@@ -443,5 +442,5 @@ feature/* ← one feature per branch, PR into develop
 | File crypto (password layer) | `src/file-crypto.ts` |
 | Voice recording | `src/voice-record.ts` |
 | Message search | `src/message-search.ts` |
-| Traffic analysis hardening | `src/crypto/message-padding.ts`, `PADDING` in `constants.ts` |
+| Traffic analysis hardening | `src/crypto/message-padding.ts`, `PADDING` in `src/shared/contracts/v1/padding.ts` |
 | Contacts store | `src/contacts-store.ts` |

@@ -1,3 +1,17 @@
+// parseInt returns NaN for a malformed value, and every limit comparison
+// against NaN is false — so RELAY_CONN_PER_IP_LIMIT=abc silently rejects every
+// connection instead of failing at boot. Refuse the value rather than serve
+// with a limit nobody can reason about.
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name}: expected a positive integer, got "${raw}"`);
+  }
+  return parsed;
+}
+
 export const SESSION_LIMITS = {
   MAX_PEERS: 10,
   DEFAULT_TTL_MS: 15 * 60 * 1000, // 15 minutes
@@ -14,7 +28,7 @@ export const SESSION_LIMITS = {
   // peer state, and cleanup bookkeeping in memory, so an unbounded create rate is
   // a DoS vector. New creates are refused at capacity (the per-IP create rate
   // limit is the first line of defence; this is the global backstop).
-  MAX_ACTIVE_SESSIONS: parseInt(process.env.MAX_ACTIVE_SESSIONS || '10000', 10),
+  MAX_ACTIVE_SESSIONS: envInt('MAX_ACTIVE_SESSIONS', 10000),
 };
 
 export const RELAY_LIMITS = {
@@ -42,7 +56,7 @@ export const RELAY_LIMITS = {
   TIMESTAMP_TOLERANCE_MS: 60 * 1000, // 1 minute drift allowed
   MSG_PER_SECOND_LIMIT: 10,
   SOCKET_MSG_PER_SECOND_LIMIT: 20, // all frame types, incl. control messages
-  CONN_PER_IP_LIMIT: parseInt(process.env.RELAY_CONN_PER_IP_LIMIT || '50', 10),
+  CONN_PER_IP_LIMIT: envInt('RELAY_CONN_PER_IP_LIMIT', 50),
   CONN_WINDOW_MS: 60 * 1000, // 1 minute
   JOIN_TIMEOUT_MS: 10 * 1000, // socket must join within this or be dropped
   MAX_BUFFERED_BYTES: 24 * 1024 * 1024, // skip sends to backpressured sockets
@@ -61,27 +75,14 @@ export const RELAY_LIMITS = {
 // is not over-inflated. Content larger than the top tier is length-prefixed but
 // not padded further (clamped) so a padded plaintext never approaches
 // MAX_PAYLOAD_BYTES after AEAD + base64 expansion.
-export const PADDING = {
-  // 8KB / 64KB / 512KB / 4MB. The 8KB floor covers the vast majority of text
-  // messages, so a 5-char and a 4KB message land in the same bucket.
-  BUCKETS: [8 * 1024, 64 * 1024, 512 * 1024, 4 * 1024 * 1024] as const,
-  // 4-byte big-endian length prefix; the real content length is recorded so
-  // padding is stripped unambiguously on decrypt.
-  LENGTH_PREFIX_BYTES: 4,
-  // A padded plaintext is never grown beyond this. Kept well under
-  // MAX_PAYLOAD_BYTES (16MB) to leave headroom for ciphertext + base64 + the
-  // per-peer fan-out JSON envelope.
-  MAX_PADDED_BYTES: 4 * 1024 * 1024,
-  // Upper bound on the random delay added before relaying non-interactive
-  // frames (receipts/edits/deletes) to blunt timing correlation. Small enough
-  // not to be felt in the UI.
-  TIMING_JITTER_MAX_MS: 120,
-};
+// Re-exported so existing backend call sites keep importing limits from one
+// place; the definition lives in the shared contract because the client pads.
+export { PADDING } from '../../shared/contracts/v1/padding';
 
 export const REST_LIMITS = {
   WINDOW_MS: 60 * 1000,
-  SESSION_CREATE_PER_WINDOW: parseInt(process.env.REST_SESSION_CREATE_LIMIT || '10', 10),
-  GENERAL_PER_WINDOW: parseInt(process.env.REST_GENERAL_LIMIT || '120', 10),
+  SESSION_CREATE_PER_WINDOW: envInt('REST_SESSION_CREATE_LIMIT', 10),
+  GENERAL_PER_WINDOW: envInt('REST_GENERAL_LIMIT', 120),
 };
 
 export const CLEANUP_INTERVAL_MS = 60 * 1000; // 1 minute

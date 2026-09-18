@@ -4,16 +4,17 @@
 // length. Round-trips are exact: the real length is recorded in a fixed-width
 // header, so unpadding strips the filler deterministically.
 //
-// Source of truth for the tiers is src/backend/core/constants.ts (PADDING).
-// They are mirrored here so the frontend has no import dependency on backend
-// code; keep the two in sync.
+// The tiers come from the shared wire-format contract, which the relay's own
+// limits are derived from too — there is exactly one definition.
 
-const LENGTH_PREFIX_BYTES = 4;
-const BUCKETS = [8 * 1024, 64 * 1024, 512 * 1024, 4 * 1024 * 1024];
+import { PADDING } from '../shared/contracts/v1/padding';
 
-// Smallest tier that fits the framed content. Content larger than every tier
-// is framed but not padded further (returns its own length) — this clamp keeps
-// a padded plaintext from ever exceeding MAX_PADDED_BYTES through padding.
+const LENGTH_PREFIX_BYTES = PADDING.LENGTH_PREFIX_BYTES;
+const BUCKETS = PADDING.BUCKETS;
+
+// Smallest tier that fits the framed content. Content larger than every tier is
+// framed but not padded further, so padding alone never pushes a plaintext past
+// MAX_PADDED_BYTES (the largest bucket); oversize content keeps its own length.
 function targetSize(framedLength: number): number {
   for (const bucket of BUCKETS) {
     if (framedLength <= bucket) return bucket;
