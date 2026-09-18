@@ -29,9 +29,18 @@ interface TrustPayload {
   v: number;
   pk: string;
   label?: string;
+  // v2 only: the sharer's Noise static public key. Carrying it in the code is
+  // what lets verification survive across vaults — without it a known person has
+  // to be re-verified in every new vault, because the existing pins are keyed by
+  // (sessionId, peerId). See ADR-007.
+  ik?: string;
 }
 
-const TRUST_PAYLOAD_VERSION = 1;
+// v2 adds the optional `ik`. Bumping the version rather than silently accepting
+// an extra field keeps a v2 code from being half-understood by an older build:
+// v1 decoders reject it outright instead of pinning a person with no Noise key.
+export const TRUST_PAYLOAD_VERSION = 2;
+const SUPPORTED_TRUST_VERSIONS = [1, 2];
 
 function b64urlEncode(bytes: Uint8Array): string {
   let s = '';
@@ -50,18 +59,32 @@ function b64urlDecode(str: string): Uint8Array {
 // One-time public-key exchange artifact. Encodes only a public key + optional
 // label — no secret, so it is safe to share over any channel (link/QR). The
 // recipient pins the key; trust is mutual once both sides have exchanged.
-export function encodeTrustPayload(publicKey: string, label?: string): string {
+export function encodeTrustPayload(publicKey: string, label?: string, noiseKey?: string): string {
   const payload: TrustPayload = { v: TRUST_PAYLOAD_VERSION, pk: publicKey.trim() };
   if (label && label.trim()) payload.label = label.trim().slice(0, 64);
+  if (noiseKey && noiseKey.trim()) payload.ik = noiseKey.trim();
   return b64urlEncode(new TextEncoder().encode(JSON.stringify(payload)));
 }
 
-export function decodeTrustPayload(encoded: string): { publicKey: string; label?: string } | null {
+export interface DecodedTrustPayload {
+  publicKey: string;
+  label?: string;
+  noiseKey?: string;
+}
+
+// Accepts the bare payload or a whole link carrying it. `?trust=` is the vault
+// whitelist link; `?id=` is the direct-mode Bunker ID link. Both encode the same
+// artifact, so both are ingested the same way.
+export function decodeTrustPayload(encoded: string): DecodedTrustPayload | null {
   try {
-    const raw = encoded.trim().replace(/^.*[?&#]trust=/, '');
+    const raw = encoded.trim().replace(/^.*[?&#](?:trust|id)=/, '').replace(/[&#].*$/, '');
     const parsed = JSON.parse(new TextDecoder().decode(b64urlDecode(raw))) as TrustPayload;
-    if (parsed && parsed.v === TRUST_PAYLOAD_VERSION && typeof parsed.pk === 'string' && parsed.pk) {
-      return { publicKey: parsed.pk, label: typeof parsed.label === 'string' ? parsed.label : undefined };
+    if (parsed && SUPPORTED_TRUST_VERSIONS.includes(parsed.v) && typeof parsed.pk === 'string' && parsed.pk) {
+      return {
+        publicKey: parsed.pk,
+        label: typeof parsed.label === 'string' ? parsed.label : undefined,
+        noiseKey: typeof parsed.ik === 'string' && parsed.ik ? parsed.ik : undefined,
+      };
     }
   } catch {
     // fall through
