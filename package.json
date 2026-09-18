@@ -1,7 +1,7 @@
 {
   "name": "quantum-bunker",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Zero-knowledge, ephemeral, real-time messaging vault. The server is a blind relay: it never decrypts, logs, or stores message payloads.",
   "license": "MIT",
   "repository": {
