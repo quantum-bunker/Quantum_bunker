@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Session, SessionStatus } from '../../../shared/contracts/v1/session';
 import { SESSION_LIMITS } from '../../core/constants';
 import { DomainError } from '../../core/errors';
+import { newToken } from '../../core/security';
 import { ISessionStore } from '../ports/session-store.port';
 import { IEventBus } from '../ports/event-bus.port';
 
@@ -35,7 +36,9 @@ export class CreateSession {
       hostRecoveryToken,
       hostPublicKey,
       peers: {
-        [hostId]: { id: hostId, joinedAt: now, lastSeenAt: now }
+        // The host holds a peer token like everyone else so no credential check
+        // can ever compare against undefined and fall through.
+        [hostId]: { id: hostId, joinedAt: now, lastSeenAt: now, token: newToken() }
       },
       pendingPeers: {},
       status: SessionStatus.PENDING,

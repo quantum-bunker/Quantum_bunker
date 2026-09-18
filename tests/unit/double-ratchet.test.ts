@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateKeyPair } from '@stablelib/x25519';
-import { hkdf } from '../../src/crypto/noise-primitives';
-import { DoubleRatchet } from '../../src/crypto/double-ratchet';
+import { hkdf, toBase64 } from '../../src/crypto/noise-primitives';
+import { DoubleRatchet, MAX_SKIPPED_KEYS } from '../../src/crypto/double-ratchet';
 
 function sharedChainKey(): Uint8Array {
   const a = generateKeyPair();
@@ -126,5 +126,58 @@ describe('DoubleRatchet', () => {
     const slot = alice.encrypt(bin);
     const result = bob.decrypt(slot);
     expect(Array.from(result)).toEqual(Array.from(bin));
+  });
+
+  // A DH ratchet step rewrites RK/CKr/CKs. Applying it before the message that
+  // announced it is authenticated lets one forged frame destroy the channel.
+  it('forged dh header does not destroy the channel', () => {
+    const { alice, bob } = makePair();
+    expect(dec(bob.decrypt(alice.encrypt(enc('before'))))).toBe('before');
+
+    const forged = {
+      h: { dh: toBase64(generateKeyPair().publicKey), n: 0, pn: 0 },
+      ct: toBase64(new Uint8Array(48)),
+    };
+    expect(() => bob.decrypt(forged)).toThrow();
+
+    // The genuine peer must still be able to talk to bob.
+    expect(dec(bob.decrypt(alice.encrypt(enc('after'))))).toBe('after');
+  });
+
+  it('a forged frame does not consume a stored skipped message key', () => {
+    const { alice, bob } = makePair();
+    const s1 = alice.encrypt(enc('one'));
+    const s2 = alice.encrypt(enc('two'));
+
+    // Deliver s2 first so s1's key is stored in MKSKIPPED.
+    expect(dec(bob.decrypt(s2))).toBe('two');
+
+    // Same (dh, n) as s1, but garbage ciphertext.
+    const forged = { h: { ...s1.h }, ct: toBase64(new Uint8Array(48)) };
+    expect(() => bob.decrypt(forged)).toThrow();
+
+    // The real s1 must still decrypt.
+    expect(dec(bob.decrypt(s1))).toBe('one');
+  });
+
+  it('a failed decrypt leaves the receive counter unchanged', () => {
+    const { alice, bob } = makePair();
+    const s1 = alice.encrypt(enc('one'));
+    const tampered = { ...s1, ct: s1.ct.slice(0, -4) + 'XXXX' };
+    expect(() => bob.decrypt(tampered)).toThrow('DR_DECRYPT_FAILED');
+    expect(dec(bob.decrypt(s1))).toBe('one');
+  });
+
+  it('MKSKIPPED stays bounded across many ratchet steps', () => {
+    const { alice, bob } = makePair();
+    for (let round = 0; round < 100; round++) {
+      // Alice sends 20 but bob only ever receives the last one, stranding 19
+      // skipped keys per round.
+      let last = alice.encrypt(enc('x'));
+      for (let i = 0; i < 19; i++) last = alice.encrypt(enc('x'));
+      bob.decrypt(last);
+      bob.encrypt(enc('reply'));
+    }
+    expect(bob.skippedKeyCount()).toBeLessThanOrEqual(MAX_SKIPPED_KEYS);
   });
 });

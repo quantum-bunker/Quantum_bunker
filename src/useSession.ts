@@ -129,7 +129,15 @@ export function useSession() {
   const refreshSession = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const resp = await fetch(`/api/sessions/${sessionId}/refresh`, { method: 'POST' });
+      const headers: Record<string, string> = {};
+      const hostToken = localStorage.getItem(`qb-recovery-${sessionId}`);
+      if (hostToken) headers['X-Host-Token'] = hostToken;
+      const peerToken = sessionStorage.getItem(`qb-peer-token-${sessionId}`);
+      if (peerToken && peerId) {
+        headers['X-Peer-Token'] = peerToken;
+        headers['X-Peer-Id'] = peerId;
+      }
+      const resp = await fetch(`/api/sessions/${sessionId}/refresh`, { method: 'POST', headers });
       if (!resp.ok) throw new Error('Refresh failed');
       const data = await resp.json();
       setExpiresAt(data.expiresAt);
@@ -137,7 +145,7 @@ export function useSession() {
     } catch (err) {
       console.error('Failed to refresh session:', err);
     }
-  }, [sessionId]);
+  }, [sessionId, peerId]);
 
   const resetSession = useCallback(() => {
     setSessionId(null);

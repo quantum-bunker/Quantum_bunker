@@ -10,6 +10,11 @@ export type RatchetSlot = { h: RatchetHeader; ct: string };
 
 const MAX_SKIP = 100;
 
+// Ceiling on skipped keys retained across all receive chains. MAX_SKIP alone
+// bounds a single gap; without a global cap a peer that repeatedly ratchets
+// while skipping messages grows MKSKIPPED without limit.
+export const MAX_SKIPPED_KEYS = 1000;
+
 // KDF_RK: HKDF with root key as salt, DH output as IKM → [newRK, chainKey]
 function kdfRK(rk: Uint8Array, dhOut: Uint8Array): [Uint8Array, Uint8Array] {
   const [newRK, ck] = hkdf(rk, dhOut, 2);
@@ -44,6 +49,55 @@ interface DRState {
   MKSKIPPED: Map<string, Uint8Array>;
 }
 
+function cloneState(s: DRState): DRState {
+  return {
+    RK: new Uint8Array(s.RK),
+    CKs: s.CKs ? new Uint8Array(s.CKs) : null,
+    CKr: s.CKr ? new Uint8Array(s.CKr) : null,
+    DHs: { publicKey: new Uint8Array(s.DHs.publicKey), secretKey: new Uint8Array(s.DHs.secretKey) },
+    DHr: s.DHr ? new Uint8Array(s.DHr) : null,
+    Ns: s.Ns,
+    Nr: s.Nr,
+    PN: s.PN,
+    MKSKIPPED: new Map(s.MKSKIPPED),
+  };
+}
+
+function dhRatchet(s: DRState, newDHr: Uint8Array): void {
+  s.PN = s.Ns;
+  s.Ns = 0;
+  s.Nr = 0;
+  s.DHr = newDHr;
+  // Step 1: receive chain from old DHs + new DHr
+  const [RK1, CKr] = kdfRK(s.RK, sharedKey(s.DHs.secretKey, newDHr));
+  // Step 2: fresh DHs for new send chain, using the updated root key
+  const newDHs = generateKeyPair();
+  const [RK2, CKs] = kdfRK(RK1, sharedKey(newDHs.secretKey, newDHr));
+  s.RK = RK2;
+  s.CKr = CKr;
+  s.CKs = CKs;
+  s.DHs = newDHs;
+}
+
+function skipMessageKeys(s: DRState, until: number, dhPub: string): void {
+  if (!s.CKr || s.Nr >= until) return;
+  if (until - s.Nr > MAX_SKIP) throw new Error('DR_SKIP_LIMIT_EXCEEDED');
+  let ck = s.CKr;
+  while (s.Nr < until) {
+    const [mk, newCK] = kdfCK(ck);
+    s.MKSKIPPED.set(`${dhPub}:${s.Nr}`, mk);
+    // Insertion order means the oldest stranded key is evicted first.
+    while (s.MKSKIPPED.size > MAX_SKIPPED_KEYS) {
+      const oldest = s.MKSKIPPED.keys().next().value;
+      if (oldest === undefined) break;
+      s.MKSKIPPED.delete(oldest);
+    }
+    ck = newCK;
+    s.Nr += 1;
+  }
+  s.CKr = ck;
+}
+
 export class DoubleRatchet {
   private s: DRState;
 
@@ -67,6 +121,10 @@ export class DoubleRatchet {
     this.s = s;
   }
 
+  skippedKeyCount(): number {
+    return this.s.MKSKIPPED.size;
+  }
+
   encrypt(plaintext: Uint8Array): RatchetSlot {
     if (this.s.CKs === null) {
       // Proactive DH ratchet: Bob wants to send before receiving Alice's first message.
@@ -88,57 +146,38 @@ export class DoubleRatchet {
     return { h, ct: toBase64(encryptMsg(mk, plaintext, ad)) };
   }
 
+  // The ratchet is advanced on a copy and committed only once the frame
+  // authenticates. `h` is unauthenticated wire data: applied eagerly, a forged
+  // header would rewrite RK/CKr/CKs — or consume a stored skipped key — and
+  // permanently break the channel for the genuine peer.
   decrypt(slot: RatchetSlot): Uint8Array {
     const { h, ct } = slot;
     const ciphertext = fromBase64(ct);
     const ad = new TextEncoder().encode(JSON.stringify(h));
+    const next = cloneState(this.s);
 
-    // Try skipped message keys first (handles out-of-order delivery)
-    const skippedMK = this.s.MKSKIPPED.get(`${h.dh}:${h.n}`);
+    const skippedKey = `${h.dh}:${h.n}`;
+    const skippedMK = next.MKSKIPPED.get(skippedKey);
     if (skippedMK) {
-      this.s.MKSKIPPED.delete(`${h.dh}:${h.n}`);
-      return decryptMsg(skippedMK, ciphertext, ad);
+      const plaintext = decryptMsg(skippedMK, ciphertext, ad);
+      next.MKSKIPPED.delete(skippedKey);
+      this.s = next;
+      return plaintext;
     }
 
     const dhBytes = fromBase64(h.dh);
-    if (!this.s.DHr || !bytesEqual(dhBytes, this.s.DHr)) {
-      this.skipMessageKeys(h.pn, this.s.DHr ? toBase64(this.s.DHr) : '');
-      this.dhRatchet(dhBytes);
+    if (!next.DHr || !bytesEqual(dhBytes, next.DHr)) {
+      skipMessageKeys(next, h.pn, next.DHr ? toBase64(next.DHr) : '');
+      dhRatchet(next, dhBytes);
     }
 
-    this.skipMessageKeys(h.n, h.dh);
-    const [mk, newCKr] = kdfCK(this.s.CKr!);
-    this.s.CKr = newCKr;
-    this.s.Nr += 1;
-    return decryptMsg(mk, ciphertext, ad);
-  }
-
-  private dhRatchet(newDHr: Uint8Array): void {
-    this.s.PN = this.s.Ns;
-    this.s.Ns = 0;
-    this.s.Nr = 0;
-    this.s.DHr = newDHr;
-    // Step 1: receive chain from old DHs + new DHr
-    const [RK1, CKr] = kdfRK(this.s.RK, sharedKey(this.s.DHs.secretKey, newDHr));
-    // Step 2: fresh DHs for new send chain, using the updated root key
-    const newDHs = generateKeyPair();
-    const [RK2, CKs] = kdfRK(RK1, sharedKey(newDHs.secretKey, newDHr));
-    this.s.RK = RK2;
-    this.s.CKr = CKr;
-    this.s.CKs = CKs;
-    this.s.DHs = newDHs;
-  }
-
-  private skipMessageKeys(until: number, dhPub: string): void {
-    if (!this.s.CKr || this.s.Nr >= until) return;
-    if (until - this.s.Nr > MAX_SKIP) throw new Error('DR_SKIP_LIMIT_EXCEEDED');
-    let ck = this.s.CKr;
-    while (this.s.Nr < until) {
-      const [mk, newCK] = kdfCK(ck);
-      this.s.MKSKIPPED.set(`${dhPub}:${this.s.Nr}`, mk);
-      ck = newCK;
-      this.s.Nr += 1;
-    }
-    this.s.CKr = ck;
+    skipMessageKeys(next, h.n, h.dh);
+    if (!next.CKr) throw new Error('DR_NO_RECV_CHAIN');
+    const [mk, newCKr] = kdfCK(next.CKr);
+    next.CKr = newCKr;
+    next.Nr += 1;
+    const plaintext = decryptMsg(mk, ciphertext, ad);
+    this.s = next;
+    return plaintext;
   }
 }

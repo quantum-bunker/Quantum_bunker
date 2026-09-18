@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { RelayEnvelope, EnvelopeType } from './shared/contracts/v1/envelope';
-import { PeerChannels, NoiseFrame } from './crypto/peer-channels';
+import { PeerChannels, NoiseFrame, loadOrCreateIdentity } from './crypto/peer-channels';
+import { parseAttributedEnvelope } from './transport/envelope-guard';
 import { KeyPair } from './crypto/noise-xx';
 import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
 import { CallSignal } from './transport/call-connection';
@@ -248,12 +249,9 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const p2p = useP2P({
     selfId: peerId,
     sendSignal: useCallback((frame: RtcFrame) => sendSignal({ ...frame }), [sendSignal]),
-    onData: useCallback((_from: string, data: string) => {
-      try {
-        handleEnvelopeRef.current?.(JSON.parse(data) as RelayEnvelope);
-      } catch {
-        // Ignore malformed data-channel frames.
-      }
+    onData: useCallback((from: string, data: string) => {
+      const env = parseAttributedEnvelope(from, data);
+      if (env) handleEnvelopeRef.current?.(env);
     }, []),
     onBinary: useCallback((from: string, data: ArrayBuffer) => {
       handleBinaryRef.current?.(from, data);
@@ -327,17 +325,25 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   }, [peerId]);
 
   // Encrypted-at-rest outbox for messages composed while no peer is online. The
-  // at-rest key is derived from this device's per-session Noise identity secret;
-  // it never leaves the device and the server stores nothing.
+  // at-rest key is this device's own secret — the unlocked long-term identity
+  // when there is one, otherwise the per-session burner Noise secret, which is
+  // the same key PeerChannels uses. It never leaves the device. There is
+  // deliberately no fallback: sessionId is known to the server, to every peer
+  // and to anyone holding the join link, so it can never key queued plaintext.
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
-    const secret = sessionStorage.getItem(`qb-noise-id-${sessionId}`) ?? sessionId;
+    let secret: string;
+    try {
+      secret = toBase64((identity ?? loadOrCreateIdentity(sessionId)).secretKey);
+    } catch {
+      return;
+    }
     MessageOutbox.open(sessionId, secret).then(box => {
       if (!cancelled) outboxRef.current = box;
     }).catch(() => {});
     return () => { cancelled = true; outboxRef.current = null; };
-  }, [sessionId]);
+  }, [sessionId, identity]);
 
   // Re-sends a queued entry over the live transport, preserving its ORIGINAL
   // nonce so the recipient dedups correctly. Returns false when no peer path is

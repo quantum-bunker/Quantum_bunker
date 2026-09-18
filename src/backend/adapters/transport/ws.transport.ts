@@ -4,7 +4,7 @@ import { IRelayTransport } from '../../application/ports/relay-transport.port';
 import { RelayEnvelope, EnvelopeType } from '../../../shared/contracts/v1/envelope';
 import { IEventBus } from '../../application/ports/event-bus.port';
 import { RelayMessage } from '../../application/use-cases/relay-message.use-case';
-import { RelayEnvelopeSchema } from '../../../shared/contracts/v1/schemas';
+import { RelayEnvelopeSchema, JoinFrameSchema, PeerIdSchema } from '../../../shared/contracts/v1/schemas';
 import { ISessionStore } from '../../application/ports/session-store.port';
 import { Session, SessionStatus } from '../../../shared/contracts/v1/session';
 import { RELAY_LIMITS, SESSION_LIMITS } from '../../core/constants';
@@ -159,13 +159,18 @@ export class WsTransport implements IRelayTransport {
 
         // Initial handshake to join session
         if (raw.type === 'join') {
-          const sessionId = raw.sessionId?.trim();
-          const peerId = raw.peerId?.trim();
-
-          if (!sessionId || !peerId) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Missing sessionId or peerId' }));
+          const parsed = JoinFrameSchema.safeParse({
+            ...raw,
+            sessionId: typeof raw.sessionId === 'string' ? raw.sessionId.trim() : raw.sessionId,
+            peerId: typeof raw.peerId === 'string' ? raw.peerId.trim() : raw.peerId,
+          });
+          if (!parsed.success) {
+            ws.send(JSON.stringify({ type: 'error', code: 'INVALID_PEER_ID', message: 'Invalid join frame' }));
             return;
           }
+          const join = parsed.data;
+          const sessionId = join.sessionId;
+          const peerId = join.peerId;
 
           const session = await this.store.get(sessionId);
 
@@ -183,7 +188,7 @@ export class WsTransport implements IRelayTransport {
 
           // Host recovery: possession of the recovery token is the only way
           // to claim host authority — hostId alone proves nothing.
-          if (safeEqual(raw.hostRecoveryToken, session.hostRecoveryToken)) {
+          if (safeEqual(join.hostRecoveryToken, session.hostRecoveryToken)) {
             if (session.hostId !== peerId) {
               delete session.peers[session.hostId];
               session.hostId = peerId;
@@ -199,10 +204,21 @@ export class WsTransport implements IRelayTransport {
             return;
           }
 
+          // Host authority is reachable only through the recovery token, handled
+          // above. hostId is public — it rides in every peer_update and every
+          // envelope's `from` — so a peer that reaches here claiming it has by
+          // definition failed that check. Falling through to the stale-socket
+          // recovery below would hand it the vault.
+          if (peerId === session.hostId) {
+            ws.send(JSON.stringify({ type: 'error', code: 'INVALID_PEER_TOKEN', message: 'Invalid host credentials' }));
+            ws.close(1008, 'Invalid host credentials');
+            return;
+          }
+
           if (session.peers[peerId]) {
             // Rejoining an admitted identity requires the peer token issued at
             // first admission — peer IDs are public and prove nothing.
-            if (!safeEqual(raw.peerToken, session.peers[peerId].token)) {
+            if (!safeEqual(join.peerToken, session.peers[peerId].token)) {
               // Stale-socket recovery: when the old connection is gone and no
               // token was presented, the peer is a legitimate reconnecting
               // client whose token was lost between admission and delivery.
@@ -229,9 +245,9 @@ export class WsTransport implements IRelayTransport {
           // Whitelisted member: a host-signed membership token plus a live
           // possession proof admits the peer with no host interaction and
           // nothing stored server-side beyond the ephemeral session.
-          if (raw.membershipToken && raw.joinProof && session.hostPublicKey) {
-            const token = decodeToken(raw.membershipToken);
-            const proof = raw.joinProof as JoinProof;
+          if (join.membershipToken && join.joinProof && session.hostPublicKey) {
+            const token = decodeToken(join.membershipToken);
+            const proof = join.joinProof as JoinProof;
             if (!token) {
               ws.send(JSON.stringify({ type: 'error', code: 'INVALID_MEMBERSHIP', message: 'Malformed membership token' }));
               return;
@@ -281,13 +297,13 @@ export class WsTransport implements IRelayTransport {
             ws.send(JSON.stringify({ type: 'error', message: 'Too many pending join requests' }));
             return;
           }
-          session.pendingPeers[peerId] = { id: peerId, message: raw.message || 'Wants to join', requestedAt: Date.now() };
+          session.pendingPeers[peerId] = { id: peerId, message: join.message || 'Wants to join', requestedAt: Date.now() };
           await this.store.save(session);
 
           currentPeerId = peerId;
           currentSessionId = sessionId;
           this.connections.set(connKey, ws); // Keep connection alive but restricted
-          hostWs.send(JSON.stringify({ type: 'join_request', peerId, message: raw.message || 'Wants to join' }));
+          hostWs.send(JSON.stringify({ type: 'join_request', peerId, message: join.message || 'Wants to join' }));
           ws.send(JSON.stringify({ type: 'pending', message: 'Waiting for host approval...' }));
           return;
         }
@@ -297,7 +313,9 @@ export class WsTransport implements IRelayTransport {
           const session = await this.store.get(currentSessionId);
           if (!session || session.hostId !== currentPeerId) return;
 
-          const targetPeer = raw.peerId;
+          const target = PeerIdSchema.safeParse(raw.peerId);
+          if (!target.success) return;
+          const targetPeer = target.data;
           if (session.pendingPeers && session.pendingPeers[targetPeer]) {
             delete session.pendingPeers[targetPeer];
             const peerToken = this.admitPeer(session, targetPeer);
@@ -318,7 +336,9 @@ export class WsTransport implements IRelayTransport {
           const session = await this.store.get(currentSessionId);
           if (!session || session.hostId !== currentPeerId) return;
 
-          const targetPeer = raw.peerId;
+          const target = PeerIdSchema.safeParse(raw.peerId);
+          if (!target.success) return;
+          const targetPeer = target.data;
           if (session.pendingPeers && session.pendingPeers[targetPeer]) {
             delete session.pendingPeers[targetPeer];
             await this.store.save(session);
@@ -339,7 +359,9 @@ export class WsTransport implements IRelayTransport {
           const session = await this.store.get(currentSessionId);
           if (!session || session.hostId !== currentPeerId || !session.isGroup) return;
 
-          const targetPeer = raw.peerId;
+          const target = PeerIdSchema.safeParse(raw.peerId);
+          if (!target.success) return;
+          const targetPeer = target.data;
           if (session.peers[targetPeer] && targetPeer !== session.hostId) {
             delete session.peers[targetPeer];
             session.participantCount = Math.max(0, session.participantCount - 1);

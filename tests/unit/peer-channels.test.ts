@@ -199,4 +199,31 @@ describe('PeerChannels', () => {
     expect(m['peer-a'].isReady('peer-b')).toBe(false);
     expect(m['peer-a'].encryptForAll('x').c['peer-b']).toBeUndefined();
   });
+
+  // finalize() used to set phase='ready' even when the hybrid root could not be
+  // built (the ML-KEM leg never completed), so isReady() reported true, the
+  // ratchet was null, encryptForAll silently omitted the peer and shipped
+  // {"c":{}} — the sender saw "sent" for a message encrypted to nobody.
+  it('a channel without a ratchet is never reported ready', () => {
+    const m = mesh('peer-a', 'peer-b');
+    connect(m);
+    expect(m['peer-a'].isReady('peer-b')).toBe(true);
+
+    const channel = (m['peer-a'] as any).channels.get('peer-b');
+    channel.ratchet = null;
+
+    expect(m['peer-a'].isReady('peer-b')).toBe(false);
+    expect(m['peer-a'].allReady(['peer-a', 'peer-b'])).toBe(false);
+  });
+
+  it('encryptForAll refuses to silently omit a ready peer', () => {
+    const m = mesh('peer-a', 'peer-b');
+    connect(m);
+
+    const channel = (m['peer-a'] as any).channels.get('peer-b');
+    channel.ratchet = null;
+    channel.phase = 'ready';
+
+    expect(() => m['peer-a'].encryptForAll('must not ship unencrypted')).toThrow('PC_NO_RATCHET');
+  });
 });

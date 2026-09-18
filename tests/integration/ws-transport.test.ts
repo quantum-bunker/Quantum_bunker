@@ -672,4 +672,71 @@ describe('WebSocket Transport Integration', () => {
     expect(err.code).toBe('RATE_LIMIT_EXCEEDED');
     hostWs.close();
   });
+
+  // The host peer record was created with no token, so safeEqual(undefined)
+  // failed and the request fell through to stale-socket recovery. With the
+  // host's socket gone, that path re-admitted the caller AS the host.
+  it('refuses to hand host authority to a peer that only knows the public hostId', async () => {
+    const res = await (await import('supertest')).default(app).post('/api/sessions').send({ name: 'Takeover', expiresInSeconds: 600 });
+    const { sessionId, hostId, hostRecoveryToken } = res.body;
+
+    const hostWs = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => hostWs.once('open', r));
+    hostWs.send(JSON.stringify({ type: 'join', sessionId, peerId: hostId, hostRecoveryToken }));
+    await waitForMessage(hostWs, 'joined');
+
+    // Host drops off; its socket is no longer registered.
+    await new Promise<void>((r) => { hostWs.once('close', () => r()); hostWs.close(); });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const attackerWs = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => attackerWs.once('open', r));
+    attackerWs.send(JSON.stringify({ type: 'join', sessionId, peerId: hostId }));
+
+    const outcome = await new Promise<any>((resolve) => {
+      attackerWs.on('message', (data: any) => {
+        const parsed = JSON.parse(data.toString());
+        if (parsed.type === 'joined' || parsed.type === 'error') resolve(parsed);
+      });
+    });
+
+    expect(outcome.type).toBe('error');
+    expect(outcome.isHost).toBeUndefined();
+    attackerWs.close();
+  });
+
+  it('refuses a prototype-polluting peerId instead of bypassing the peer limit', async () => {
+    const res = await (await import('supertest')).default(app).post('/api/sessions').send({ name: 'Proto', expiresInSeconds: 600 });
+    const { sessionId, hostId, hostRecoveryToken } = res.body;
+
+    const hostWs = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => hostWs.once('open', r));
+    hostWs.send(JSON.stringify({ type: 'join', sessionId, peerId: hostId, hostRecoveryToken }));
+    await waitForMessage(hostWs, 'joined');
+
+    const evilWs = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => evilWs.once('open', r));
+    evilWs.send(JSON.stringify({ type: 'join', sessionId, peerId: '__proto__' }));
+    const err = await waitForMessage(evilWs, 'error');
+    expect(err.code).toBe('INVALID_PEER_ID');
+
+    // The session object must be untouched by the attempt.
+    const info = await (await import('supertest')).default(app).get(`/api/sessions/${sessionId}`);
+    expect(info.body.participantCount).toBe(1);
+
+    hostWs.close();
+    evilWs.close();
+  });
+
+  it('rejects an oversized peerId', async () => {
+    const res = await (await import('supertest')).default(app).post('/api/sessions').send({ name: 'BigId', expiresInSeconds: 600 });
+    const { sessionId } = res.body;
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => ws.once('open', r));
+    ws.send(JSON.stringify({ type: 'join', sessionId, peerId: 'x'.repeat(5000) }));
+    const err = await waitForMessage(ws, 'error');
+    expect(err.code).toBe('INVALID_PEER_ID');
+    ws.close();
+  });
 });
