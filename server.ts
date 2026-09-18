@@ -239,6 +239,17 @@ async function startServer() {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // A relay is a long-lived process holding every session in memory: losing it
+  // destroys every live vault. One rejected promise in a socket handler must not
+  // be able to do that, so we log and keep serving rather than taking the
+  // default exit. Nothing here touches payloads.
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection:', reason instanceof Error ? reason.message : reason);
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err?.message);
+  });
 }
 
 if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {

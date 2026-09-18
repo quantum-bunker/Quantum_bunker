@@ -192,3 +192,46 @@ describe('InMemorySessionStore.count', () => {
     expect(await store.count()).toBe(0);
   });
 });
+describe('InMemorySessionStore resurrection guard', () => {
+  let store: InMemorySessionStore;
+
+  beforeEach(() => {
+    store = new InMemorySessionStore();
+  });
+
+  it('a save that lost the race with delete does not resurrect the session', async () => {
+    const sess = makeSession();
+    await store.save(sess);
+    await store.delete(sess.id);
+
+    // An in-flight join finishing after the destroy.
+    sess.lastActivityAt = Date.now();
+    await store.save(sess);
+
+    expect(await store.get(sess.id)).toBeNull();
+    expect(await store.count()).toBe(0);
+  });
+
+  it('a save cannot resurrect a session the cleanup sweep reaped', async () => {
+    const sess = makeSession({ expiresAt: Date.now() - 1 });
+    await store.save(sess);
+    expect((await store.cleanup()).length).toBe(1);
+
+    await store.save(sess);
+    expect(await store.get(sess.id)).toBeNull();
+  });
+
+  it('releases the tombstone once its TTL has passed', async () => {
+    const sess = makeSession();
+    await store.save(sess);
+    await store.delete(sess.id);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + SESSION_LIMITS.TOMBSTONE_TTL_MS + 1);
+    await store.cleanup();
+    vi.useRealTimers();
+
+    await store.save(sess);
+    expect(await store.get(sess.id)).not.toBeNull();
+  });
+});

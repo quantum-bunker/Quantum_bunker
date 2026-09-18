@@ -9,10 +9,13 @@ import { ISessionStore } from '../../application/ports/session-store.port';
 import { Session, SessionStatus } from '../../../shared/contracts/v1/session';
 import { RELAY_LIMITS, SESSION_LIMITS } from '../../core/constants';
 import { safeEqual, newToken, clientIp, isAllowedOrigin, torMode } from '../../core/security';
+import { stalePeerIds } from '../../core/policies/presence.policy';
+import { DomainError } from '../../core/errors';
 import { decodeToken, verifyMembership, JoinProof } from '../../../shared/membership';
 
 export class WsTransport implements IRelayTransport {
   private connections = new Map<string, WebSocket>(); // "sessionId:peerId" -> socket
+  private sessionPeers = new Map<string, Set<string>>(); // sessionId -> live peerIds
   private messageCounters = new Map<string, { count: number; lastReset: number }>();
   private ipCounters = new Map<string, { count: number; lastReset: number }>();
   private usedProofNonces = new Map<string, number>(); // join-proof replay guard
@@ -23,7 +26,7 @@ export class WsTransport implements IRelayTransport {
     private readonly store: ISessionStore,
     private relayMessage?: RelayMessage // Set after initialization
   ) {
-    this.wss.on('connection', (ws, req) => this.handleConnection(ws, req));
+    this.wss.on('connection', (ws, req) => { void this.handleConnection(ws, req); });
   }
 
   setRelayMessage(relayMessage: RelayMessage) {
@@ -37,6 +40,9 @@ export class WsTransport implements IRelayTransport {
     }
     for (const [key, counter] of this.messageCounters) {
       if (now - counter.lastReset > 10_000) this.messageCounters.delete(key);
+    }
+    for (const [sessionId, peers] of this.sessionPeers) {
+      if (peers.size === 0) this.sessionPeers.delete(sessionId);
     }
     for (const [nonce, at] of this.usedProofNonces) {
       if (now - at > RELAY_LIMITS.CONN_WINDOW_MS * 2) this.usedProofNonces.delete(nonce);
@@ -54,6 +60,58 @@ export class WsTransport implements IRelayTransport {
     }
     this.usedProofNonces.set(key, Date.now());
     return true;
+  }
+
+  private connectedPeers(sessionId: string): Set<string> {
+    let set = this.sessionPeers.get(sessionId);
+    if (!set) {
+      set = new Set();
+      this.sessionPeers.set(sessionId, set);
+    }
+    return set;
+  }
+
+  // Presence is derived from live sockets rather than an incrementing counter.
+  // A counter drifts every time a reconnect lands before the old socket's close
+  // event, and a session whose count reaches zero is reaped by the cleanup
+  // sweep while its peers are still talking.
+  private syncPresence(session: Session): void {
+    // Pending guests hold a registered socket so the host can reach them, but
+    // they are not participants until admitted.
+    const count = this.admittedPeers(session).length;
+    session.participantCount = count;
+    session.emptySince = count === 0 ? (session.emptySince ?? Date.now()) : null;
+  }
+
+  private reclaimStaleSlots(session: Session): void {
+    const connected = this.connectedPeers(session.id);
+    for (const id of stalePeerIds(session.peers, connected, session.hostId, Date.now())) {
+      delete session.peers[id];
+    }
+  }
+
+  private admittedPeers(session: Session): string[] {
+    return [...this.connectedPeers(session.id)].filter(
+      (id) => Object.prototype.hasOwnProperty.call(session.peers, id),
+    );
+  }
+
+  private registerConnection(sessionId: string, peerId: string, ws: WebSocket): void {
+    this.connections.set(`${sessionId}:${peerId}`, ws);
+    this.connectedPeers(sessionId).add(peerId);
+  }
+
+  // A socket can transition to CLOSING between the readyState check and the
+  // write. An uncaught throw inside an async handler surfaces as an unhandled
+  // rejection, which terminates the process on Node 20.
+  private safeSend(ws: WebSocket | undefined, frame: string): boolean {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      ws.send(frame);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private checkIpLimit(req: IncomingMessage): boolean {
@@ -93,17 +151,21 @@ export class WsTransport implements IRelayTransport {
     return counter.count <= RELAY_LIMITS.MSG_PER_SECOND_LIMIT;
   }
 
-  private admitPeer(session: Session, peerId: string): string {
+  // Returns null when the session is full. Capacity is enforced here rather
+  // than only on the join path, because pending peers sit outside session.peers
+  // and the host could otherwise accept a full queue past the limit.
+  private admitPeer(session: Session, peerId: string): string | null {
+    this.reclaimStaleSlots(session);
     const wasAlreadyAdmitted = !!session.peers[peerId];
+    if (!wasAlreadyAdmitted && Object.keys(session.peers).length >= session.maxPeers) {
+      return null;
+    }
     const token = session.peers[peerId]?.token || newToken();
     session.peers[peerId] = { id: peerId, joinedAt: Date.now(), lastSeenAt: Date.now(), token };
-    if (!wasAlreadyAdmitted) {
-      session.participantCount = (session.participantCount || 0) + 1;
-    }
+    this.syncPresence(session);
     if (session.participantCount > 2) {
       session.isGroup = true;
     }
-    session.emptySince = null;
     session.status = SessionStatus.ACTIVE;
     return token;
   }
@@ -179,6 +241,7 @@ export class WsTransport implements IRelayTransport {
             return;
           }
 
+          this.reclaimStaleSlots(session);
           if (Object.keys(session.peers).length >= session.maxPeers && !session.peers[peerId]) {
             ws.send(JSON.stringify({ type: 'error', message: 'Session full' }));
             return;
@@ -195,8 +258,12 @@ export class WsTransport implements IRelayTransport {
             }
             currentPeerId = peerId;
             currentSessionId = sessionId;
-            this.connections.set(connKey, ws);
+            this.registerConnection(sessionId, peerId, ws);
             const peerToken = this.admitPeer(session, peerId);
+            if (!peerToken) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Session full' }));
+              return;
+            }
             await this.store.save(session);
 
             ws.send(JSON.stringify({ type: 'joined', sessionId, peerId, isHost: true, peerToken }));
@@ -233,8 +300,12 @@ export class WsTransport implements IRelayTransport {
             }
             currentPeerId = peerId;
             currentSessionId = sessionId;
-            this.connections.set(connKey, ws);
+            this.registerConnection(sessionId, peerId, ws);
             const peerToken = this.admitPeer(session, peerId);
+            if (!peerToken) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Session full' }));
+              return;
+            }
             await this.store.save(session);
 
             ws.send(JSON.stringify({ type: 'joined', sessionId, peerId, peerToken }));
@@ -263,8 +334,12 @@ export class WsTransport implements IRelayTransport {
             }
             currentPeerId = peerId;
             currentSessionId = sessionId;
-            this.connections.set(connKey, ws);
+            this.registerConnection(sessionId, peerId, ws);
             const peerToken = this.admitPeer(session, peerId);
+            if (!peerToken) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Session full' }));
+              return;
+            }
             await this.store.save(session);
 
             ws.send(JSON.stringify({ type: 'joined', sessionId, peerId, peerToken, viaMembership: true }));
@@ -288,7 +363,7 @@ export class WsTransport implements IRelayTransport {
           if (session.pendingPeers[peerId]) {
             currentPeerId = peerId;
             currentSessionId = sessionId;
-            this.connections.set(connKey, ws);
+            this.registerConnection(sessionId, peerId, ws);
             ws.send(JSON.stringify({ type: 'pending', message: 'Waiting for host approval...' }));
             return;
           }
@@ -302,7 +377,7 @@ export class WsTransport implements IRelayTransport {
 
           currentPeerId = peerId;
           currentSessionId = sessionId;
-          this.connections.set(connKey, ws); // Keep connection alive but restricted
+          this.registerConnection(sessionId, peerId, ws); // Keep connection alive but restricted
           hostWs.send(JSON.stringify({ type: 'join_request', peerId, message: join.message || 'Wants to join' }));
           ws.send(JSON.stringify({ type: 'pending', message: 'Waiting for host approval...' }));
           return;
@@ -317,8 +392,12 @@ export class WsTransport implements IRelayTransport {
           if (!target.success) return;
           const targetPeer = target.data;
           if (session.pendingPeers && session.pendingPeers[targetPeer]) {
-            delete session.pendingPeers[targetPeer];
             const peerToken = this.admitPeer(session, targetPeer);
+            if (!peerToken) {
+              this.safeSend(ws, JSON.stringify({ type: 'error', code: 'PEER_LIMIT_REACHED', message: 'Session is full' }));
+              return;
+            }
+            delete session.pendingPeers[targetPeer];
             await this.store.save(session);
 
             const targetKey = `${currentSessionId}:${targetPeer}`;
@@ -364,10 +443,8 @@ export class WsTransport implements IRelayTransport {
           const targetPeer = target.data;
           if (session.peers[targetPeer] && targetPeer !== session.hostId) {
             delete session.peers[targetPeer];
-            session.participantCount = Math.max(0, session.participantCount - 1);
-            if (session.participantCount === 0) {
-              session.emptySince = Date.now();
-            }
+            this.connectedPeers(currentSessionId).delete(targetPeer);
+            this.syncPresence(session);
             await this.store.save(session);
 
             const targetKey = `${currentSessionId}:${targetPeer}`;
@@ -421,46 +498,65 @@ export class WsTransport implements IRelayTransport {
         }
 
       } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid message format' }));
+        // Never swallow: a rejected frame always leaves an EnvelopeRejected
+        // trail, and a DomainError keeps its code so the client can act on it
+        // rather than seeing a generic parse failure.
+        const code = err instanceof DomainError ? err.code : 'INVALID_FRAME';
+        const message = err instanceof DomainError ? err.message : 'Invalid message format';
+        this.eventBus.emit({
+          type: 'EnvelopeRejected',
+          sessionId: currentSessionId || 'unknown',
+          occurredAt: Date.now(),
+          payload: { reason: code, rawEnvelope: { from: currentPeerId || 'unknown' } },
+        });
+        this.safeSend(ws, JSON.stringify({ type: 'error', code, message }));
       }
     });
 
-    ws.on('close', async () => {
-      if (currentPeerId && currentSessionId) {
-        const connKey = `${currentSessionId}:${currentPeerId}`;
-        if (this.connections.get(connKey) === ws) {
-          this.connections.delete(connKey);
-        }
-
-        const session = await this.store.get(currentSessionId);
-        if (session && session.peers[currentPeerId]) {
-          session.participantCount = Math.max(0, (session.participantCount || 1) - 1);
-          if (session.participantCount === 0) {
-            session.emptySince = Date.now();
-          }
-          await this.store.save(session);
-          this.broadcastPeerUpdate(session);
-        }
-
-        this.eventBus.emit({
-          type: 'PeerDisconnected',
-          sessionId: currentSessionId,
-          occurredAt: Date.now(),
-          payload: { peerId: currentPeerId }
-        });
-      }
+    ws.on('close', () => {
+      void this.handleClose(ws, currentSessionId, currentPeerId);
     });
   }
 
+  private async handleClose(ws: WebSocket, sessionId: string | null, peerId: string | null): Promise<void> {
+    if (!peerId || !sessionId) return;
+    try {
+      const connKey = `${sessionId}:${peerId}`;
+      // A reconnect may already own this key; only the live socket tears down,
+      // otherwise a late close event evicts the peer that just replaced it.
+      if (this.connections.get(connKey) !== ws) return;
+      this.connections.delete(connKey);
+      this.connectedPeers(sessionId).delete(peerId);
+
+      const session = await this.store.get(sessionId);
+      if (session) {
+        // A guest that disconnects before approval must not hold its slot, or
+        // the pending queue fills permanently and blocks every future join.
+        if (session.pendingPeers) delete session.pendingPeers[peerId];
+        const peer = session.peers[peerId];
+        if (peer) peer.lastSeenAt = Date.now();
+        this.syncPresence(session);
+        await this.store.save(session);
+        this.broadcastPeerUpdate(session);
+      }
+
+      this.eventBus.emit({
+        type: 'PeerDisconnected',
+        sessionId,
+        occurredAt: Date.now(),
+        payload: { peerId },
+      });
+    } catch {
+      // Teardown is best-effort; a throw here would become an unhandled
+      // rejection and take the process down.
+    }
+  }
+
   private broadcastPeerUpdate(session: Session) {
-    const peers = Object.keys(session.peers).filter(id => this.isPeerConnected(session.id, id));
+    const peers = this.admittedPeers(session);
     const frame = JSON.stringify({ type: 'peer_update', peers, isGroup: !!session.isGroup });
     for (const peerId of peers) {
-      const connKey = `${session.id}:${peerId}`;
-      const ws = this.connections.get(connKey);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(frame);
-      }
+      this.safeSend(this.connections.get(`${session.id}:${peerId}`), frame);
     }
   }
 
@@ -483,8 +579,7 @@ export class WsTransport implements IRelayTransport {
     // Backpressure guard: a slow consumer drops messages instead of growing
     // the server's send buffer without bound.
     if (ws.bufferedAmount > RELAY_LIMITS.MAX_BUFFERED_BYTES) return false;
-    ws.send(frame);
-    return true;
+    return this.safeSend(ws, frame);
   }
 
   isPeerConnected(sessionId: string, peerId: string): boolean {
@@ -494,14 +589,15 @@ export class WsTransport implements IRelayTransport {
   }
 
   disconnectSession(sessionId: string): void {
-    for (const [key, ws] of this.connections.entries()) {
-      if (key.startsWith(`${sessionId}:`)) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Session destroyed' }));
-          ws.close(1008, 'Session destroyed');
-        }
+    const frame = JSON.stringify({ type: 'error', message: 'Session destroyed' });
+    for (const peerId of this.connectedPeers(sessionId)) {
+      const key = `${sessionId}:${peerId}`;
+      const ws = this.connections.get(key);
+      if (ws) {
+        if (this.safeSend(ws, frame)) ws.close(1008, 'Session destroyed');
         this.connections.delete(key);
       }
     }
+    this.sessionPeers.delete(sessionId);
   }
 }
