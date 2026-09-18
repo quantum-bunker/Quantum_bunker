@@ -189,15 +189,19 @@ export class PeerChannels {
     channel.safetyNumber = safetyNumber(channel.hs.handshakeHash);
     channel.remoteStaticKey = channel.hs.remoteStaticKey;
 
-    if (channel.remoteDRKey && channel.pqSecret) {
+    if (!channel.remoteDRKey || !channel.pqSecret) {
       // Hybrid root: the classical Noise chaining key combined with the ML-KEM
       // shared secret. Both must be present — we never fall back to a PQ-only
-      // or classical-only root.
-      const root = combineHybridSecret(channel.hs.chainKey, channel.pqSecret);
-      channel.ratchet = channel.initiator
-        ? DoubleRatchet.initAlice(root, channel.drKeyPair, channel.remoteDRKey)
-        : DoubleRatchet.initBob(root, channel.drKeyPair, channel.remoteDRKey);
+      // or classical-only root. Marking this 'ready' would let encryptForAll
+      // skip the peer and ship a payload encrypted to nobody.
+      channel.phase = 'failed';
+      return;
     }
+
+    const root = combineHybridSecret(channel.hs.chainKey, channel.pqSecret);
+    channel.ratchet = channel.initiator
+      ? DoubleRatchet.initAlice(root, channel.drKeyPair, channel.remoteDRKey)
+      : DoubleRatchet.initBob(root, channel.drKeyPair, channel.remoteDRKey);
 
     channel.phase = 'ready';
   }
@@ -208,9 +212,10 @@ export class PeerChannels {
     // ciphertext length regardless of the true message size.
     const bytes = padPlaintext(utf8(plaintext));
     for (const [peerId, channel] of this.channels) {
-      if (channel.phase === 'ready' && channel.ratchet) {
-        c[peerId] = channel.ratchet.encrypt(bytes);
-      }
+      if (channel.phase !== 'ready') continue;
+      // A ready channel with no ratchet would drop this recipient silently.
+      if (!channel.ratchet) throw new Error('PC_NO_RATCHET');
+      c[peerId] = channel.ratchet.encrypt(bytes);
     }
     return { c };
   }
@@ -232,7 +237,8 @@ export class PeerChannels {
   }
 
   isReady(peerId: string): boolean {
-    return this.channels.get(peerId)?.phase === 'ready';
+    const channel = this.channels.get(peerId);
+    return !!channel && channel.phase === 'ready' && !!channel.ratchet;
   }
 
   allReady(peerIds: string[]): boolean {
@@ -322,7 +328,7 @@ export function buildPrologue(
   return utf8(canonical);
 }
 
-function loadOrCreateIdentity(sessionId: string): KeyPair {
+export function loadOrCreateIdentity(sessionId: string): KeyPair {
   const key = `qb-noise-id-${sessionId}`;
   try {
     const stored = sessionStorage.getItem(key);

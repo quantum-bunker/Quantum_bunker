@@ -148,9 +148,21 @@ export async function setupApp() {
   });
 
   app.post('/api/sessions/:id/refresh', async (req, res) => {
-    const session = await container.store.get(req.params.id);
+    const session = await container.store.get(req.params.id.trim());
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
+    }
+    // Extending a vault's life is a participant action. Session ids travel in
+    // join links and are public, so possession of one cannot be the credential:
+    // prove host authority or an admitted peer identity.
+    const peerId = req.headers['x-peer-id'];
+    const isHost = safeEqual(req.headers['x-host-token'], session.hostRecoveryToken);
+    const isPeer =
+      typeof peerId === 'string' &&
+      Object.prototype.hasOwnProperty.call(session.peers, peerId) &&
+      safeEqual(req.headers['x-peer-token'], session.peers[peerId]?.token);
+    if (!isHost && !isPeer) {
+      return res.status(403).json({ error: 'Not a participant in this session' });
     }
     if (session.participantCount <= 0) {
       return res.status(409).json({ error: 'Session has no active participants' });

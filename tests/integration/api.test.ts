@@ -78,7 +78,9 @@ describe('HTTP API Integration Tests', () => {
       .post('/api/sessions')
       .send({ name: 'Refresh Vault', expiresInSeconds: 600 });
 
-    const refreshRes = await request(app).post(`/api/sessions/${createRes.body.sessionId}/refresh`);
+    const refreshRes = await request(app)
+      .post(`/api/sessions/${createRes.body.sessionId}/refresh`)
+      .set('X-Host-Token', createRes.body.hostRecoveryToken);
     expect(refreshRes.status).toBe(200);
     expect(refreshRes.body.expiresAt).toBeGreaterThan(Date.now());
   });
@@ -173,7 +175,9 @@ describe('HTTP API Integration Tests', () => {
       });
 
       // Now refresh should succeed
-      const refreshRes = await request(app2).post(`/api/sessions/${sid}/refresh`);
+      const refreshRes = await request(app2)
+        .post(`/api/sessions/${sid}/refresh`)
+        .set('X-Host-Token', hrt);
       expect(refreshRes.status).toBe(200);
       expect(refreshRes.body.expiresAt).toBeGreaterThan(origExpires);
       expect(refreshRes.body.expiresAt).toBeGreaterThan(Date.now());
@@ -182,6 +186,25 @@ describe('HTTP API Integration Tests', () => {
       if (setup2.cleanupInterval) clearInterval(setup2.cleanupInterval);
       srv2.close();
     }, 10000);
+
+    it('refresh without a participant credential is refused', async () => {
+      const createRes = await request(app)
+        .post('/api/sessions')
+        .send({ name: 'RefreshAuthz', expiresInSeconds: 600 });
+      const { sessionId, expiresAt } = createRes.body;
+
+      // Knowing the session id is not enough — it travels in every join link.
+      const anon = await request(app).post(`/api/sessions/${sessionId}/refresh`);
+      expect(anon.status).toBe(403);
+
+      const wrong = await request(app)
+        .post(`/api/sessions/${sessionId}/refresh`)
+        .set('X-Host-Token', 'not-the-token');
+      expect(wrong.status).toBe(403);
+
+      const info = await request(app).get(`/api/sessions/${sessionId}`);
+      expect(info.body.expiresAt).toBe(expiresAt);
+    });
 
     it('refresh cannot extend past the absolute 24h lifetime cap', async () => {
       const { setupApp } = await import('../../server');
@@ -208,7 +231,9 @@ describe('HTTP API Integration Tests', () => {
         });
       });
 
-      const refreshRes = await request(app2).post(`/api/sessions/${sessionId}/refresh`);
+      const refreshRes = await request(app2)
+        .post(`/api/sessions/${sessionId}/refresh`)
+        .set('X-Host-Token', hostRecoveryToken);
       expect(refreshRes.status).toBe(200);
 
       // Should not exceed createdAt + MAX_TTL_MS
