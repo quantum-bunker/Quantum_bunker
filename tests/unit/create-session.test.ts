@@ -116,3 +116,18 @@ describe('CreateSession Use Case', () => {
     });
   });
 });
+
+describe('CreateSession with a supplied id after a destroy', () => {
+  it('actually stores the vault it reports as created', async () => {
+    const store = new InMemorySessionStore();
+    const create = new CreateSession(store, { emit: () => {}, on: () => {} } as any);
+    const id = '11111111-2222-4333-8444-555555555555';
+
+    await create.execute({ id });
+    await store.delete(id);
+    const again = await create.execute({ id });
+
+    expect(again.existing).toBe(false);
+    expect(await store.get(id)).toBe(again.session);
+  });
+});

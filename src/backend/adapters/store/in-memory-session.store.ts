@@ -4,14 +4,18 @@ import { SESSION_LIMITS } from '../../core/constants';
 
 export class InMemorySessionStore implements ISessionStore {
   private sessions = new Map<string, Session>();
-  private tombstones = new Map<string, number>();
+  // Tracks the deleted session *objects*, not their ids. get() hands out the
+  // stored reference, so a join that was mid-flight when the session was
+  // destroyed or reaped still holds that exact object; re-saving it would revive
+  // a copy the transport has already torn down — unreachable, yet counting
+  // against MAX_ACTIVE_SESSIONS and kept alive by its own activity. Blocking by
+  // id instead would also refuse a deliberate new session under the same id,
+  // which direct mode does: both peers re-derive the vault id from their shared
+  // secret, so re-opening right after a destroy must work.
+  private deleted = new WeakSet<Session>();
 
   async save(session: Session): Promise<void> {
-    // A join that was mid-flight when the session was destroyed or reaped must
-    // not resurrect it: the transport has already torn down its sockets, so the
-    // revived copy would be unreachable yet still count against
-    // MAX_ACTIVE_SESSIONS, and its own activity would keep it from expiring.
-    if (this.tombstones.has(session.id)) return;
+    if (this.deleted.has(session)) return;
     this.sessions.set(session.id, session);
   }
 
@@ -20,8 +24,9 @@ export class InMemorySessionStore implements ISessionStore {
   }
 
   async delete(id: string): Promise<void> {
+    const sess = this.sessions.get(id);
+    if (sess) this.deleted.add(sess);
     this.sessions.delete(id);
-    this.tombstones.set(id, Date.now());
   }
 
   async count(): Promise<number> {
@@ -39,9 +44,6 @@ export class InMemorySessionStore implements ISessionStore {
     const now = Date.now();
     const deleted: Session[] = [];
 
-    for (const [id, at] of this.tombstones) {
-      if (now - at > SESSION_LIMITS.TOMBSTONE_TTL_MS) this.tombstones.delete(id);
-    }
 
     for (const [id, sess] of this.sessions.entries()) {
       const isExpired = sess.expiresAt < now;
@@ -50,7 +52,7 @@ export class InMemorySessionStore implements ISessionStore {
 
       if (isExpired || isInactive || isEmptyTooLong) {
         this.sessions.delete(id);
-        this.tombstones.set(id, now);
+        this.deleted.add(sess);
         deleted.push(sess);
       }
     }

@@ -221,17 +221,18 @@ describe('InMemorySessionStore resurrection guard', () => {
     expect(await store.get(sess.id)).toBeNull();
   });
 
-  it('releases the tombstone once its TTL has passed', async () => {
-    const sess = makeSession();
-    await store.save(sess);
-    await store.delete(sess.id);
+  // Direct mode re-derives the same vault id from the pair's shared secret, so
+  // a deliberate new session under a destroyed id must be storable at once. An
+  // id-keyed tombstone used to refuse it for 60s while CreateSession still
+  // reported success — handing the caller credentials to a vault that was never
+  // stored.
+  it('a new session may reuse a destroyed id immediately', async () => {
+    const old = makeSession();
+    await store.save(old);
+    await store.delete(old.id);
 
-    vi.useFakeTimers();
-    vi.setSystemTime(Date.now() + SESSION_LIMITS.TOMBSTONE_TTL_MS + 1);
-    await store.cleanup();
-    vi.useRealTimers();
-
-    await store.save(sess);
-    expect(await store.get(sess.id)).not.toBeNull();
+    const fresh = makeSession({ id: old.id });
+    await store.save(fresh);
+    expect(await store.get(old.id)).toBe(fresh);
   });
 });
