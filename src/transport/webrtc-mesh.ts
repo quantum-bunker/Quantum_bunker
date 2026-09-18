@@ -237,6 +237,15 @@ export class WebRTCMesh {
   }
 
   private wireDataChannel(peerId: string, peer: MeshPeer, dc: RTCDataChannel): void {
+    // A renegotiation or a re-fired ondatachannel would otherwise strand the
+    // previous channel, still open and still holding its handlers.
+    if (peer.dc && peer.dc !== dc) {
+      try {
+        peer.dc.close();
+      } catch {
+        // Already torn down.
+      }
+    }
     peer.dc = dc;
     dc.binaryType = 'arraybuffer';
     dc.onopen = () => {
@@ -250,6 +259,7 @@ export class WebRTCMesh {
     };
     dc.onclose = () => {
       if (peer.state !== 'failed') peer.state = 'closed';
+      this.releaseTransport(peer);
       this.opts.onStateChange();
     };
     // Previously unwired, so a channel error was invisible: the peer stayed
@@ -264,11 +274,33 @@ export class WebRTCMesh {
     };
   }
 
+  // A failed or dropped link keeps its entry so the UI can still report why it
+  // died, but its RTCPeerConnection must not stay alive: it goes on gathering
+  // candidates, and its pending flush timer fires into a dead connection. Both
+  // states are terminal — recovery goes through removePeer + ensurePeer.
+  private releaseTransport(peer: MeshPeer): void {
+    if (peer.timer !== null) {
+      clearTimeout(peer.timer);
+      peer.timer = null;
+    }
+    if (peer.flushTimer !== null) {
+      clearTimeout(peer.flushTimer);
+      peer.flushTimer = null;
+    }
+    try {
+      peer.dc?.close();
+      peer.pc.close();
+    } catch {
+      // Already torn down.
+    }
+  }
+
   private markFailed(peerId: string, reason: P2PFailureReason): void {
     const peer = this.peers.get(peerId);
     if (!peer || peer.state === 'connected') return;
     peer.state = 'failed';
     peer.reason = reason;
+    this.releaseTransport(peer);
     this.opts.onStateChange();
   }
 
@@ -281,6 +313,7 @@ export class WebRTCMesh {
     if (!peer || peer.state !== 'connected') return;
     peer.state = 'dropped';
     peer.reason = 'peer-left';
+    this.releaseTransport(peer);
     this.opts.onStateChange();
   }
 
@@ -335,14 +368,7 @@ export class WebRTCMesh {
   removePeer(peerId: string): void {
     const peer = this.peers.get(peerId);
     if (!peer) return;
-    if (peer.timer !== null) clearTimeout(peer.timer);
-    if (peer.flushTimer !== null) clearTimeout(peer.flushTimer);
-    try {
-      peer.dc?.close();
-      peer.pc.close();
-    } catch {
-      // Already torn down.
-    }
+    this.releaseTransport(peer);
     this.peers.delete(peerId);
   }
 

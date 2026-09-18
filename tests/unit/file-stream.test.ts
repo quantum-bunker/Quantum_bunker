@@ -177,3 +177,17 @@ describe('password-protected streamed file (approach a)', () => {
     expect(opened).toBeNull();
   });
 });
+
+describe('FileStreamReceiver zero-length transfers', () => {
+  it('an empty file completes instead of hanging forever', () => {
+    const { init } = createFileStream(bytesSource(new Uint8Array(0)), {
+      name: 'empty.txt',
+      mime: 'text/plain',
+    });
+
+    expect(init.chunks).toBe(0);
+    const receiver = new FileStreamReceiver(init);
+    expect(receiver.isDone).toBe(true);
+    expect(receiver.result().size).toBe(0);
+  });
+});

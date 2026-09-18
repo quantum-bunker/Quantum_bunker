@@ -7,7 +7,7 @@ import { RtcFrame, shouldUseP2P } from './transport/webrtc-mesh';
 import { CallSignal } from './transport/call-connection';
 import { useP2P } from './useP2P';
 import { useCall } from './useCall';
-import { requiresDirectPath, exceedsRelayFanout, P2P_STREAM_HIGH_WATER_BYTES } from './transport/p2p-policy';
+import { requiresDirectPath, exceedsRelayFanout, P2P_STREAM_HIGH_WATER_BYTES, P2P_STREAM_DRAIN_TIMEOUT_MS, STREAM_RECEIVER_TTL_MS, PING_RECORD_TTL_MS } from './transport/p2p-policy';
 import { PacedSender, classifySignalPriority, SIGNAL_SENDS_PER_SECOND } from './transport/send-queue';
 import { randomId } from './random';
 import { buildJoinCredentials, loadIdentity, MEMBER_KEY } from './membership-store';
@@ -125,7 +125,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
   const mailboxRef = useRef<PeerMailbox>(new PeerMailbox());
   const handleEnvelopeRef = useRef<((env: RelayEnvelope) => void) | null>(null);
   const handleBinaryRef = useRef<((fromPeerId: string, data: ArrayBuffer) => void) | null>(null);
-  const streamRecvRef = useRef<Map<string, { receiver: FileStreamReceiver; from: string; nonce: string; sessionId: string; enc?: FileLock }>>(new Map());
+  const streamRecvRef = useRef<Map<string, { receiver: FileStreamReceiver; from: string; nonce: string; sessionId: string; enc?: FileLock; lastFrameAt: number }>>(new Map());
   const activePeersRef = useRef<string[]>([]);
   const readSentRef = useRef<Set<string>>(new Set());
   const pingTimestampRef = useRef<Map<string, number>>(new Map());
@@ -151,11 +151,35 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
         const next = prev.filter(m => Date.now() - m.timestamp < 5 * 60 * 1000);
         if (next.length === prev.length) return prev;
         const kept = new Set(next.map(m => m.fileUrl).filter(Boolean));
+        const keptNonces = new Set(next.map(m => m.nonce));
         for (const m of prev) {
           if (m.fileUrl && !kept.has(m.fileUrl)) releaseObjectUrl(m.fileUrl);
+          // Read-receipt bookkeeping outlived the message it referred to, so
+          // this set grew for the whole session and never shrank.
+          if (!keptNonces.has(m.nonce)) readSentRef.current.delete(m.nonce);
         }
         return next;
       });
+
+      // An unanswered ping leaves its timestamp behind forever; the RTT is
+      // meaningless long before this cutoff anyway.
+      const pingCutoff = Date.now() - PING_RECORD_TTL_MS;
+      for (const [nonce, at] of pingTimestampRef.current) {
+        if (at < pingCutoff) pingTimestampRef.current.delete(nonce);
+      }
+
+      // A receiver whose sender vanished holds every decrypted chunk it got —
+      // up to MAX_P2P_FILE_BYTES — for the life of the session.
+      const stallCutoff = Date.now() - STREAM_RECEIVER_TTL_MS;
+      for (const [fileId, entry] of streamRecvRef.current) {
+        if (entry.lastFrameAt < stallCutoff) {
+          streamRecvRef.current.delete(fileId);
+          setMessages(prev => prev.map(m =>
+            m.nonce === entry.nonce
+              ? { ...m, fileError: 'Transfer stalled — the sender stopped responding', progress: undefined }
+              : m));
+        }
+      }
     }, 10000); // Check every 10s
     return () => clearInterval(interval);
   }, [releaseObjectUrl]);
@@ -564,7 +588,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
               const ratio = total > 0 ? rcv / total : 0;
               setMessages(prev => prev.map(m => (m.nonce === nonce ? { ...m, progress: ratio } : m)));
             });
-            streamRecvRef.current.set(init.fileId, { receiver, from: env.from, nonce, sessionId: env.sessionId, enc: init.enc });
+            streamRecvRef.current.set(init.fileId, { receiver, from: env.from, nonce, sessionId: env.sessionId, enc: init.enc, lastFrameAt: Date.now() });
             setMessages(prev => {
               if (prev.some(m => m.nonce === nonce)) return prev;
               return [...prev, { ...env, payload: '', file: { name: init.name, mime: init.mime, size: init.size, data: '' }, locked: !!init.enc, progress: 0, status: 'delivered', deliveredTo: [], seenBy: [] }];
@@ -638,6 +662,7 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
 
       try {
         entry.receiver.acceptFrame(frame);
+        entry.lastFrameAt = Date.now();
       } catch {
         streamRecvRef.current.delete(fileId);
         setMessages(prev => prev.map(m =>
@@ -753,6 +778,16 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
           if (next.includes(id)) continue;
           mgr?.removePeer(id);
           p2pRef.current.removePeer(id);
+          // Anything this peer was still streaming can never complete, and its
+          // receiver retains every chunk decrypted so far.
+          for (const [fileId, entry] of streamRecvRef.current) {
+            if (entry.from !== id) continue;
+            streamRecvRef.current.delete(fileId);
+            setMessages(msgs => msgs.map(m =>
+              m.nonce === entry.nonce
+                ? { ...m, fileError: 'Transfer aborted — the sender left', progress: undefined }
+                : m));
+          }
         }
         refreshCrypto();
         return;
@@ -953,7 +988,14 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       let done = 0;
       for await (const frame of frames()) {
         if (!p2pRef.current.allConnected(others)) throw new Error('PEER_LEFT');
+        // bufferedAmount reports Infinity for a peer the mesh no longer knows,
+        // so a peer leaving while we wait would keep this condition true
+        // forever. Re-check liveness inside the wait, and bound it in wall
+        // clock so a stalled-but-present channel cannot hang the transfer.
+        const waitUntil = Date.now() + P2P_STREAM_DRAIN_TIMEOUT_MS;
         while (others.some(id => p2pRef.current.bufferedAmount(id) > P2P_STREAM_HIGH_WATER_BYTES)) {
+          if (!p2pRef.current.allConnected(others)) throw new Error('PEER_LEFT');
+          if (Date.now() > waitUntil) throw new Error('SEND_STALLED');
           await new Promise(resolve => setTimeout(resolve, 15));
         }
         // A frame may be a view over a larger buffer; slice the exact range once
@@ -1085,11 +1127,12 @@ export function useRelay(sessionId: string | null, peerId: string | null, identi
       nonce: randomId(),
       payload: targetNonce,
     });
-    setMessages(prev => prev.map(m =>
-      m.nonce === targetNonce && m.from === peerId
-        ? { ...m, payload: '', deleted: true }
-        : m));
-  }, [sessionId, peerId, dispatch]);
+    setMessages(prev => prev.map(m => {
+      if (m.nonce !== targetNonce || m.from !== peerId) return m;
+      releaseObjectUrl(m.fileUrl);
+      return { ...m, payload: '', deleted: true, fileUrl: undefined };
+    }));
+  }, [sessionId, peerId, dispatch, releaseObjectUrl]);
 
   useEffect(() => {
     if (sessionId && peerId) {

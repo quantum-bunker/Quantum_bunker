@@ -69,6 +69,13 @@ export class CallConnection {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private outboundCandidates: RTCIceCandidateInit[] = [];
   private candidateTimer: ReturnType<typeof setTimeout> | null = null;
+  // Candidates that arrived before the remote description. With both sides
+  // batching trickle ICE over a rate-limited relay, an 'ice' frame routinely
+  // beats the 'sdp' frame it belongs to; adding one then throws
+  // InvalidStateError and used to fail the entire call. WebRTCMesh already
+  // queues these — the call layer must behave the same way.
+  private pendingCandidates: RTCIceCandidateInit[] = [];
+  private remoteReady = false;
   // Whether any server-reflexive candidate was gathered. Read by useCall to tell
   // "the network returned no public address" apart from "no route between two
   // known addresses", which need different advice.
@@ -169,23 +176,42 @@ export class CallConnection {
         this.ignoreOffer = !this.polite && offerCollision;
         if (this.ignoreOffer) return;
         await this.pc.setRemoteDescription(signal.sdp);
+        this.remoteReady = true;
+        await this.flushPendingCandidates();
         if (signal.sdp.type === 'offer') {
           await this.pc.setLocalDescription();
           if (this.pc.localDescription) this.opts.sendSignal({ call: 'sdp', sdp: this.pc.localDescription });
         }
       } else if (signal.call === 'ice') {
         const batch = signal.candidates ?? (signal.candidate ? [signal.candidate] : []);
-        for (const candidate of batch) {
-          try {
-            await this.pc.addIceCandidate(candidate);
-          } catch {
-            if (!this.ignoreOffer) throw new Error('ICE_ADD_FAILED');
-          }
+        if (!this.remoteReady) {
+          this.pendingCandidates.push(...batch);
+          return;
         }
+        await this.addCandidates(batch);
       }
     } catch {
       this.setState('failed');
     }
+  }
+
+  // One unusable candidate is normal (a stale or unroutable address) and must
+  // not fail the call; the connection state machine reports a genuine failure.
+  private async addCandidates(batch: RTCIceCandidateInit[]): Promise<void> {
+    for (const candidate of batch) {
+      try {
+        await this.pc.addIceCandidate(candidate);
+      } catch {
+        // Ignored: a single rejected candidate is not a call failure.
+      }
+    }
+  }
+
+  private async flushPendingCandidates(): Promise<void> {
+    if (this.pendingCandidates.length === 0) return;
+    const queued = this.pendingCandidates;
+    this.pendingCandidates = [];
+    await this.addCandidates(queued);
   }
 
   private setState(next: CallConnectionState): void {

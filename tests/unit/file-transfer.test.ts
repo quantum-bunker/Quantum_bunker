@@ -174,3 +174,36 @@ describe('resolveMime for voice notes', () => {
     expect(resolveMime('audio/webm;codecs=opus', 'voice-1.webm')).toBe('audio/webm;codecs=opus');
   });
 });
+
+describe('decodeFileLock iteration bounds', () => {
+  const lock = (iter: unknown) => ({
+    algo: 'AES-GCM',
+    kdf: 'PBKDF2-SHA256',
+    iter,
+    salt: 'c2FsdA',
+    iv: 'aXY',
+  });
+
+  it('accepts the iteration count we emit ourselves', () => {
+    expect(decodeFileLock(lock(210_000))?.iter).toBe(210_000);
+  });
+
+  // `iter` is attacker-supplied and goes straight to crypto.subtle.deriveBits:
+  // an absurd value freezes the recipient's tab as soon as they enter a password.
+  it('rejects an iteration count that would hang the recipient', () => {
+    expect(decodeFileLock(lock(2_000_000_000))).toBeNull();
+  });
+
+  it('rejects counts that would make the password layer worthless', () => {
+    expect(decodeFileLock(lock(0))).toBeNull();
+    expect(decodeFileLock(lock(-1))).toBeNull();
+    expect(decodeFileLock(lock(1_000))).toBeNull();
+  });
+
+  it('rejects non-integer and non-numeric counts', () => {
+    expect(decodeFileLock(lock(210_000.5))).toBeNull();
+    expect(decodeFileLock(lock(NaN))).toBeNull();
+    expect(decodeFileLock(lock('210000'))).toBeNull();
+    expect(decodeFileLock(lock(undefined))).toBeNull();
+  });
+});
