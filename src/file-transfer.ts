@@ -1,4 +1,5 @@
 import type { FileLock } from './file-crypto';
+import { isAcceptableIterationCount } from './file-crypto';
 
 export interface FileAttachment {
   name: string;
@@ -130,14 +131,15 @@ export function decodeFileAttachment(raw: string): FileAttachment | null {
 export function decodeFileLock(raw: unknown): FileLock | null {
   if (!raw || typeof raw !== 'object') return null;
   const e = raw as Record<string, unknown>;
+  const iter = e.iter;
   if (
     (e.algo !== 'AES-GCM' && e.algo !== 'ChaCha20-Poly1305') ||
     e.kdf !== 'PBKDF2-SHA256' ||
-    typeof e.iter !== 'number' ||
+    !isAcceptableIterationCount(iter) ||
     typeof e.salt !== 'string' ||
     typeof e.iv !== 'string'
   ) {
     return null;
   }
-  return { algo: e.algo, kdf: 'PBKDF2-SHA256', iter: e.iter, salt: e.salt, iv: e.iv };
+  return { algo: e.algo, kdf: 'PBKDF2-SHA256', iter, salt: e.salt, iv: e.iv };
 }

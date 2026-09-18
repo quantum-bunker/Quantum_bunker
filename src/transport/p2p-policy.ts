@@ -22,6 +22,20 @@ export const P2P_FILE_THRESHOLD_BYTES = 1024 * 1024;
 // chunks while a peer's data-channel send buffer sits above this, so a fast
 // producer can never balloon the SCTP buffer to gigabytes for a slow link.
 // Named here (not a magic number) per the same constants discipline.
+// How long an inbound stream may go without a frame before it is abandoned.
+// Its receiver holds every chunk decrypted so far, so a sender that vanishes
+// mid-transfer would otherwise pin that memory for the whole session.
+export const STREAM_RECEIVER_TTL_MS = 60_000;
+
+// How long an unanswered ping's send timestamp is kept. The round trip is
+// meaningless long before this; the entry only needs to outlive a normal PONG.
+export const PING_RECORD_TTL_MS = 60_000;
+
+// Longest a sender waits for a peer's data channel to drain below the high
+// water mark before giving up. Without a bound, a channel that stops draining
+// but never closes leaves the transfer spinning and the UI stuck mid-progress.
+export const P2P_STREAM_DRAIN_TIMEOUT_MS = 30_000;
+
 export const P2P_STREAM_HIGH_WATER_BYTES = 1 * 1024 * 1024;
 
 // Above this many peers, even a sub-threshold file is forced onto the direct

@@ -19,6 +19,22 @@ export interface FileLock {
 // force of a captured ciphertext costly, low enough to derive in well under a
 // second on a typical client.
 const PBKDF2_ITERATIONS = 210_000;
+
+// A peer supplies `iter` on the wire, and it is fed straight to
+// crypto.subtle.deriveBits. Unbounded, a hostile sender can freeze the
+// recipient's tab the moment they type a password; too low and the password
+// layer is worthless. Accept only a band around what we ourselves emit.
+export const MIN_PBKDF2_ITERATIONS = 50_000;
+export const MAX_PBKDF2_ITERATIONS = 1_000_000;
+
+export function isAcceptableIterationCount(iter: unknown): iter is number {
+  return (
+    typeof iter === 'number' &&
+    Number.isInteger(iter) &&
+    iter >= MIN_PBKDF2_ITERATIONS &&
+    iter <= MAX_PBKDF2_ITERATIONS
+  );
+}
 const SALT_BYTES = 16;
 const IV_BYTES = 12; // AES-GCM IV and ChaCha20-Poly1305 nonce are both 12 bytes
 

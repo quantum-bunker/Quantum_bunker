@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { WebRTCMesh, RtcFrame } from './transport/webrtc-mesh';
 import { getP2PIceConfig } from './transport/ice-config';
 import {
@@ -130,9 +130,14 @@ export function useP2P(opts: UseP2POptions): UseP2P {
   }, [apply]);
 
   const handleSignal = useCallback((fromPeerId: string, frame: RtcFrame) => {
+    // getMesh() constructs the mesh lazily and caches it forever, so a frame
+    // arriving before this peer has an id would pin selfId to '' permanently:
+    // isOfferer('', peer) is always true and every inbound frame is then
+    // rejected by the to-address check. Same guard as ensurePeer.
+    if (!selfId || fromPeerId === selfId) return;
     void getMesh().onSignal(fromPeerId, frame);
     sync();
-  }, [getMesh, sync]);
+  }, [selfId, getMesh, sync]);
 
   const sendDirect = useCallback(
     (peerId: string, data: string): boolean => meshRef.current?.send(peerId, data) ?? false,
@@ -164,6 +169,14 @@ export function useP2P(opts: UseP2POptions): UseP2P {
     (peerId: string): P2PFailureReason | undefined => meshRef.current?.reasonOf(peerId),
     [],
   );
+
+  // The hook owns every RTCPeerConnection it creates, so it must also release
+  // them. Teardown previously happened only because useRelay called reset() in
+  // its own cleanup — any other consumer leaked the whole mesh.
+  useEffect(() => () => {
+    meshRef.current?.reset();
+    meshRef.current = null;
+  }, []);
 
   const connectedPeers = Object.entries(peerStates)
     .filter(([, s]) => s === 'connected')

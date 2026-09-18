@@ -739,4 +739,78 @@ describe('WebSocket Transport Integration', () => {
     expect(err.code).toBe('INVALID_PEER_ID');
     ws.close();
   });
+
+  // The close handler decremented participantCount unconditionally while
+  // admitPeer skipped the increment for an already-admitted peer, so every
+  // reconnect lost one. At zero the cleanup sweep reaps a session whose peers
+  // are still talking.
+  it('a reconnect does not drift participantCount downward', async () => {
+    const res = await (await import('supertest')).default(app).post('/api/sessions').send({ name: 'Drift', expiresInSeconds: 600 });
+    const { sessionId, hostId, hostRecoveryToken } = res.body;
+
+    const hostWs = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => hostWs.once('open', r));
+    hostWs.send(JSON.stringify({ type: 'join', sessionId, peerId: hostId, hostRecoveryToken }));
+    await waitForMessage(hostWs, 'joined');
+
+    const peerId = 'peer-reconnect';
+    const first = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => first.once('open', r));
+    first.send(JSON.stringify({ type: 'join', sessionId, peerId }));
+    await waitForMessage(first, 'pending');
+    hostWs.send(JSON.stringify({ type: 'accept_join', peerId }));
+    const admitted = await waitForMessage(first, 'joined');
+    const peerToken = admitted.peerToken;
+
+    const before = await (await import('supertest')).default(app).get(`/api/sessions/${sessionId}`);
+    expect(before.body.participantCount).toBe(2);
+
+    // Reconnect on a second socket, then let the original close land.
+    const second = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => second.once('open', r));
+    second.send(JSON.stringify({ type: 'join', sessionId, peerId, peerToken }));
+    await waitForMessage(second, 'joined');
+    await new Promise<void>((r) => { first.once('close', () => r()); first.close(); });
+    await new Promise((r) => setTimeout(r, 80));
+
+    const after = await (await import('supertest')).default(app).get(`/api/sessions/${sessionId}`);
+    expect(after.body.participantCount).toBe(2);
+
+    hostWs.close();
+    second.close();
+  });
+
+  it('accept_join cannot push a session past its peer limit', async () => {
+    const res = await (await import('supertest')).default(app).post('/api/sessions').send({ name: 'Cap', expiresInSeconds: 600 });
+    const { sessionId, hostId, hostRecoveryToken } = res.body;
+
+    const hostWs = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise((r) => hostWs.once('open', r));
+    hostWs.send(JSON.stringify({ type: 'join', sessionId, peerId: hostId, hostRecoveryToken }));
+    await waitForMessage(hostWs, 'joined');
+
+    const { SESSION_LIMITS } = await import('../../src/backend/core/constants');
+    const sockets: any[] = [];
+    // Queue the full pending allowance first. Pending peers are not in
+    // session.peers, so the join-time capacity gate lets every one of them
+    // through; the bypass is accepting them all afterwards.
+    for (let i = 0; i < SESSION_LIMITS.MAX_PENDING_PEERS; i++) {
+      const w = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      await new Promise((r) => w.once('open', r));
+      sockets.push(w);
+      w.send(JSON.stringify({ type: 'join', sessionId, peerId: `cap-${i}` }));
+      await waitForMessage(w, 'pending');
+    }
+    for (let i = 0; i < SESSION_LIMITS.MAX_PENDING_PEERS; i++) {
+      hostWs.send(JSON.stringify({ type: 'accept_join', peerId: `cap-${i}` }));
+      // Stay under the per-socket control-frame rate limit.
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    const info = await (await import('supertest')).default(app).get(`/api/sessions/${sessionId}`);
+    expect(info.body.participantCount).toBeLessThanOrEqual(SESSION_LIMITS.MAX_PEERS);
+
+    hostWs.close();
+    for (const w of sockets) w.close();
+  }, 20000);
 });

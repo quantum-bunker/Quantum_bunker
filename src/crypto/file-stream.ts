@@ -224,6 +224,10 @@ export class FileStreamReceiver {
     this.fileId = fromBase64(init.fileId);
     this.fileIdB64 = init.fileId;
     this.aeadKey = deriveAeadKey(this.fileId, fromBase64(init.key));
+    // A zero-byte file produces no frames, so acceptFrame — the only place
+    // `complete` is otherwise set — never runs. Without this the sender reports
+    // success while the receiver waits on a transfer that can never finish.
+    this.complete = init.chunks === 0;
   }
 
   get isDone(): boolean {

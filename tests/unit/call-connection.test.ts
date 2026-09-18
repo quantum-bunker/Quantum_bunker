@@ -38,14 +38,15 @@ let lastPc: FakePeerConnection;
 
 function build() {
   const sent: Omit<CallSignal, 'kind' | 'to'>[] = [];
+  const states: string[] = [];
   const conn = new CallConnection({
     selfId: 'aaa',
     peerId: 'zzz',
     sendSignal: (s) => sent.push(s),
     onRemoteStream: () => {},
-    onState: () => {},
+    onState: (st) => states.push(st),
   });
-  return { conn, sent, pc: lastPc };
+  return { conn, sent, states, pc: lastPc };
 }
 
 describe('CallConnection ICE candidate batching', () => {
@@ -104,8 +105,9 @@ describe('CallConnection ICE candidate batching', () => {
     expect(conn.gatheredReflexive).toBe(true);
   });
 
-  it('accepts a batched ice frame', async () => {
+  it('accepts a batched ice frame once the remote description is set', async () => {
     const { conn, pc } = build();
+    await conn.onSignal({ kind: 'call', call: 'sdp', to: 'aaa', sdp: { type: 'answer', sdp: 'x' } as any });
     await conn.onSignal({
       kind: 'call', call: 'ice', to: 'aaa',
       candidates: [{ candidate: 'x' }, { candidate: 'y' }],
@@ -115,8 +117,41 @@ describe('CallConnection ICE candidate batching', () => {
 
   it('still accepts the previous single-candidate shape', async () => {
     const { conn, pc } = build();
+    await conn.onSignal({ kind: 'call', call: 'sdp', to: 'aaa', sdp: { type: 'answer', sdp: 'x' } as any });
     await conn.onSignal({ kind: 'call', call: 'ice', to: 'aaa', candidate: { candidate: 'legacy' } });
     expect(pc.added).toEqual([{ candidate: 'legacy' }]);
+  });
+
+  // Both sides batch trickle ICE over the same rate-limited relay, so an 'ice'
+  // frame routinely arrives before the 'sdp' it belongs to. Adding a candidate
+  // with no remote description throws InvalidStateError, which used to fail the
+  // whole call.
+  it('buffers candidates that arrive before the remote description', async () => {
+    const { conn, pc, states } = build();
+    await conn.onSignal({
+      kind: 'call', call: 'ice', to: 'aaa',
+      candidates: [{ candidate: 'early-1' }, { candidate: 'early-2' }],
+    });
+    expect(pc.added).toEqual([]);
+    expect(states).not.toContain('failed');
+
+    await conn.onSignal({ kind: 'call', call: 'sdp', to: 'aaa', sdp: { type: 'answer', sdp: 'x' } as any });
+    expect(pc.added).toEqual([{ candidate: 'early-1' }, { candidate: 'early-2' }]);
+  });
+
+  it('one unusable candidate does not fail the call', async () => {
+    const { conn, pc, states } = build();
+    pc.addIceCandidate = async (c: any) => {
+      if (c.candidate === 'bad') throw new Error('InvalidStateError');
+      pc.added.push(c);
+    };
+    await conn.onSignal({ kind: 'call', call: 'sdp', to: 'aaa', sdp: { type: 'answer', sdp: 'x' } as any });
+    await conn.onSignal({
+      kind: 'call', call: 'ice', to: 'aaa',
+      candidates: [{ candidate: 'bad' }, { candidate: 'good' }],
+    });
+    expect(pc.added).toEqual([{ candidate: 'good' }]);
+    expect(states).not.toContain('failed');
   });
 });
 
