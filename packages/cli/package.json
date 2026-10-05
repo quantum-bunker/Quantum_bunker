@@ -32,11 +32,11 @@
     "@stablelib/hkdf": "^2.0.1",
     "@stablelib/sha256": "^2.0.1",
     "@stablelib/x25519": "^2.0.1",
-    "ws": "^8.21.3"
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^26.5.1",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.23.13",
     "typescript": "~6.0.3"
   }
