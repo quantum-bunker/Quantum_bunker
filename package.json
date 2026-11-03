@@ -45,7 +45,7 @@
     "uuid": "^14.0.2",
     "vite": "^8.3.0",
     "winston": "^3.19.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
